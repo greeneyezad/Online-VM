@@ -1,0 +1,16 @@
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+dist/
+build/
+/data/
+*.qcow2
+*.img
+.DS_Store
+*.log
+.venv/
+venv/
+*.sock

@@ -2,5 +2,21 @@
   "previewPort": 3000,
   "healthPath": "/",
   "startCommand": "docker compose -f docker-compose.base44.yml up -d",
-  "secrets": []
+  "secrets": [
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "API key for the in-app AI troubleshooting assistant (OpenAI or any OpenAI-compatible provider). Optional: without it the rest of the app works and the assistant panel reports 'Not configured'. Get one at https://platform.openai.com/api-keys",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "OPENAI_BASE_URL",
+      "description": "Optional OpenAI-compatible base URL for the assistant, e.g. a Groq/OpenRouter/Ollama endpoint. Defaults to https://api.openai.com/v1",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "OPENAI_MODEL",
+      "description": "Optional chat model name for the assistant. Defaults to gpt-4o-mini",
+      "requiredAtBoot": false
+    }
+  ]
 }

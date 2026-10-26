@@ -31,10 +31,13 @@ Non-obvious bits:
   so `npm install` (never `npm ci`) is the correct command.
 - State (`/data/vms.json`, disk images, uploaded ISOs) is kept in the `vm_data` volume.
 
-## No credentials required
+## Credentials
 
-The app uses no external services and no database — the backend persists to
-`/data/vms.json`. There are no secrets to configure.
+The app uses no database — the backend persists to `/data/vms.json`. The only
+external service is the AI assistant's chat-completions provider, configured with
+`OPENAI_API_KEY` (optional, delivered as a Base44 secret into
+`/run/base44/app.env`; see "AI assistant" below). Everything else runs with no
+credentials, and the app boots fine without the key.
 
 ## Sandbox-only overrides
 

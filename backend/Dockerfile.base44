@@ -1,0 +1,25 @@
+# Base44 sandbox dev image for the FastAPI backend.
+#
+# The application source is NOT copied into this image: docker-compose.base44.yml
+# bind-mounts ./backend at /app so edits are picked up by uvicorn --reload.
+# Only the system-level runtime dependencies (QEMU tooling + curl for the
+# compose healthcheck) and the Python requirements are baked in here.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        qemu-system-x86 \
+        qemu-utils \
+        ovmf \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python deps are baked in for a fast first boot; the compose command re-syncs
+# them from requirements.txt on every start so edits to it take effect.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt

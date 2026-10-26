@@ -97,6 +97,10 @@ There is no test suite in this repository.
   (and keep their VNC port) with nothing tracking them. Kill them before starting VMs
   again:
   `for p in /proc/[0-9]*; do c=$(cat $p/comm 2>/dev/null); case "$c" in qemu-system*) kill ${p#/proc/};; esac; done`
+- Boot time under TCG (no KVM): a 3 GB Ubuntu 24.04 live-server ISO reaches the
+  installer language menu in roughly 7 minutes; SeaBIOS prints
+  `Boot failed: Could not read CDROM` instantly when the ISO is not attached, so
+  that message means `iso_path` is null, not that the ISO is bad.
 - Boot smoke test: upload an ISO (`curl -F "file=@x.iso" http://localhost:3000/api/isos/upload`),
   create a VM with `boot_order: "dc"`, open `/vm/<id>` and press Start. VNC readiness:
   `exec -T api python3 -c "import socket;s=socket.create_connection(('127.0.0.1',5900));print(s.recv(12))"`

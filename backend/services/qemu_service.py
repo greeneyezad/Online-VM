@@ -12,6 +12,9 @@ KVM_DEVICE = "/dev/kvm"
 QEMU_BINARY = "qemu-system-x86_64"
 OVMF_PATH = "/usr/share/ovmf/OVMF.fd"
 
+# Memory kept for the API, the web dev server and the OS itself.
+HOST_RESERVE_MB = 2048
+
 # Maps vm_id -> {"process": asyncio.subprocess.Process, "monitor_socket": str, "vnc_port": int}
 running_vms: Dict[str, Any] = {}
 
@@ -40,6 +43,30 @@ def qemu_version() -> str:
         return "unknown"
 
 
+def host_ram_mb() -> int:
+    """Total RAM of the host, in MB (0 when it can't be read)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return 0
+
+
+def max_ram_mb() -> int:
+    """Largest guest RAM this host can really hand to a single VM.
+
+    QEMU allocates the whole guest RAM up front, so asking for more than the
+    host has free fails with an opaque "Cannot allocate memory".
+    """
+    total = host_ram_mb()
+    if not total:
+        return 65536
+    return max(512, (total - HOST_RESERVE_MB) // 512 * 512)
+
+
 def capabilities() -> Dict[str, Any]:
     """Everything the UI needs to offer only options this host can honour."""
     accel = accelerator()
@@ -52,6 +79,8 @@ def capabilities() -> Dict[str, Any]:
         "kvm_available": accel == "kvm",
         "qemu_version": qemu_version(),
         "ovmf_available": os.path.exists(OVMF_PATH),
+        "host_ram_mb": host_ram_mb(),
+        "max_ram_mb": max_ram_mb(),
         "cpu_models": cpu_models,
         "machine_types": ["q35", "pc-i440fx"],
         "disk_buses": ["virtio", "scsi", "sata"],
@@ -153,10 +182,13 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     # Boot order
     args += ["-boot", f"order={vm.boot_order or 'dc'}"]
 
-    # Network
+    # Network. The NIC must name its backend explicitly: a bare `-device
+    # virtio-net-pci` is created without a peer ("nic ... has no peer"), so the
+    # guest sees a link-less card — no DHCP, no internet, and hostfwd rules are
+    # never reachable.
     if vm.network_type != "none":
         args += ["-netdev", _netdev(vm)]
-        device = vm.network_interface or "virtio-net-pci"
+        device = f"{vm.network_interface or 'virtio-net-pci'},netdev=net0"
         if vm.network_type != "bridged":
             device += f",mac={_mac_address(vm)}"
         args += ["-device", device]
@@ -196,6 +228,13 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
 
 async def start_vm(vm: VMConfig) -> None:
     """Create disk if missing, then launch QEMU and register the process."""
+    if vm.ram_mb > max_ram_mb():
+        raise RuntimeError(
+            f"{vm.ram_mb} MB of RAM is more than this host can give a VM "
+            f"(limit {max_ram_mb()} MB of {host_ram_mb()} MB total). "
+            "Lower the VM's RAM in its settings."
+        )
+
     if vm.iso_path and not os.path.exists(vm.iso_path):
         raise RuntimeError(f"ISO image not found: {vm.iso_path}")
 

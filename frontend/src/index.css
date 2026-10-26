@@ -1007,3 +1007,199 @@ kbd {
 .accel-note-soft {
   border-left-color: var(--warning);
 }
+
+/* ── AI Assistant ── */
+.ai-fab {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 60;
+}
+.ai-fab:hover {
+  background: var(--accent-hover);
+}
+
+.ai-panel {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  width: 380px;
+  max-width: calc(100vw - 2rem);
+  height: 520px;
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  z-index: 60;
+}
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.9rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+.ai-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+.ai-model {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+.ai-icon-btn {
+  display: inline-flex;
+  padding: 0.25rem;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+.ai-icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.ai-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem;
+}
+.ai-hint,
+.ai-empty {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.ai-empty ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+.ai-empty li {
+  margin: 0.15rem 0;
+}
+
+.ai-notice {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.ai-notice strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+.ai-notice code {
+  background: var(--bg-primary);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+.ai-msg {
+  max-width: 92%;
+  font-size: 0.85rem;
+}
+.ai-msg-text {
+  white-space: pre-wrap;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+}
+.ai-msg-user {
+  align-self: flex-end;
+}
+.ai-msg-user .ai-msg-text {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 2px;
+}
+.ai-msg-assistant {
+  align-self: flex-start;
+}
+.ai-msg-assistant .ai-msg-text {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 2px;
+}
+.ai-thinking {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.ai-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.7rem;
+  color: var(--success);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.ai-action.failed {
+  color: var(--error);
+}
+.ai-error {
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8rem;
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+}
+
+.ai-panel-footer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+}
+.ai-panel-footer input {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ai-panel-footer input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ai-panel-footer .btn-primary {
+  padding: 0.5rem 0.7rem;
+}

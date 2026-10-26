@@ -66,6 +66,8 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [tagInput, setTagInput] = useState('')
+  // QEMU allocates guest RAM up front, so never offer more than the host has.
+  const maxRam = system?.max_ram_mb || 65536
 
   useEffect(() => {
     if (isOpen) {
@@ -260,12 +262,12 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 <label className="form-label">RAM: {formatRAM(form.ram_mb)}</label>
                 <input
                   type="range" className="form-range"
-                  min={512} max={65536} step={512}
+                  min={512} max={maxRam} step={512}
                   value={form.ram_mb}
                   onChange={e => set('ram_mb', Number(e.target.value))}
                 />
                 <div className="quick-select">
-                  {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].map(n => (
+                  {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(n => n <= maxRam).map(n => (
                     <button
                       key={n}
                       className={form.ram_mb === n ? 'active' : ''}

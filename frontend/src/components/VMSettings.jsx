@@ -289,10 +289,10 @@ export default function VMSettings() {
           </div>
           <div className="form-group">
             <label className="form-label">RAM: {formatRAM(form.ram_mb || 2048)}</label>
-            <input type="range" className="form-range" min={512} max={65536} step={512}
+            <input type="range" className="form-range" min={512} max={system?.max_ram_mb || 65536} step={512}
               value={form.ram_mb || 2048} onChange={e => set('ram_mb', Number(e.target.value))} disabled={inputDisabled} />
             <div className="quick-select">
-              {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].map(n => (
+              {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(n => n <= (system?.max_ram_mb || 65536)).map(n => (
                 <button key={n} className={form.ram_mb === n ? 'active' : ''} onClick={() => !inputDisabled && set('ram_mb', n)} disabled={inputDisabled}>{formatRAM(n)}</button>
               ))}
             </div>

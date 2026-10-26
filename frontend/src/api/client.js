@@ -19,6 +19,9 @@ export const createSnapshot = (id, data) => api.post(`/vms/${id}/snapshot`, data
 export const listSnapshots = (id) => api.get(`/vms/${id}/snapshots`).then(r => r.data)
 export const restoreSnapshot = (id, snap) => api.post(`/vms/${id}/snapshot/${snap}/restore`).then(r => r.data)
 export const getISOs = () => api.get('/isos').then(r => r.data)
+export const getAIStatus = () => api.get('/ai/status').then(r => r.data)
+export const chatWithAI = (messages, page) =>
+  api.post('/ai/chat', { messages, page }).then(r => r.data)
 export const uploadISO = (formData, onProgress) =>
   api.post('/isos/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },

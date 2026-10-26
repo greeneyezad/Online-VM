@@ -10,6 +10,17 @@ from services import qemu_service as qemu
 router = APIRouter()
 
 
+def _check_ram(ram_mb: int) -> None:
+    """Reject RAM the host cannot actually allocate (QEMU would fail on start)."""
+    limit = qemu.max_ram_mb()
+    if ram_mb > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"RAM {ram_mb} MB exceeds this host's limit of {limit} MB "
+                   f"({qemu.host_ram_mb()} MB total).",
+        )
+
+
 # ──────────────────────────────────────────────
 # VM CRUD
 # ──────────────────────────────────────────────
@@ -22,6 +33,7 @@ async def list_vms():
 
 @router.post("/vms", status_code=201)
 async def create_vm(body: VMCreate):
+    _check_ram(body.ram_mb)
     vm_id = str(uuid.uuid4())
     disk_path = f"{store.DISKS_DIR}/{vm_id}.{body.disk_format}"
 
@@ -51,6 +63,8 @@ async def update_vm(vm_id: str, body: VMUpdate):
         raise HTTPException(status_code=400, detail="Stop the VM before changing settings")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "ram_mb" in update_data:
+        _check_ram(update_data["ram_mb"])
     for key, value in update_data.items():
         setattr(vm, key, value)
 

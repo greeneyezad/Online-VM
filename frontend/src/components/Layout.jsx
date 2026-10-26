@@ -1,6 +1,7 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { Server, HardDrive, Settings, Monitor, Activity } from 'lucide-react'
+import AIAssistant from './AIAssistant'
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
@@ -73,6 +74,7 @@ export default function Layout({ children }) {
           {children}
         </div>
       </div>
+      <AIAssistant />
     </div>
   )
 }

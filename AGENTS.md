@@ -105,3 +105,30 @@ There is no test suite in this repository.
   create a VM with `boot_order: "dc"`, open `/vm/<id>` and press Start. VNC readiness:
   `exec -T api python3 -c "import socket;s=socket.create_connection(('127.0.0.1',5900));print(s.recv(12))"`
   → `b'RFB 003.008\n'`.
+- **The NIC must name its backend.** `-device virtio-net-pci` without `,netdev=net0`
+  gives the guest a link-less card: QEMU warns `nic ... has no peer`, DHCP fails in
+  the guest ("Network autoconfiguration failed") and `hostfwd` is unreachable, even
+  though `-netdev user` exists. `info network` shows the netdev *nested under* the
+  NIC only when it is wired correctly.
+- Guests still need the interface up themselves: a fresh Alpine ISO boots with
+  `eth0` DOWN, so `ip link set eth0 up` then `udhcpc -i eth0` is required before
+  testing internet from inside a guest.
+
+## AI assistant
+
+`/api/ai/*` plus the floating panel in the UI (`components/AIAssistant.jsx`). The
+backend (`services/ai_service.py`) calls any OpenAI-compatible
+`/chat/completions` endpoint and gives the model tools it executes against the
+live hypervisor: `system_info`, `list_vms`, `get_vm`, `list_isos`, `start_vm`,
+`stop_vm`, `reset_vm`, `set_vm_power` (pause/resume). Destructive operations
+(deleting VMs/ISOs/snapshots) are deliberately not exposed.
+
+- Credentials: `OPENAI_API_KEY` (required, delivered as a Base44 secret through
+  `env_file: /run/base44/app.env`), `OPENAI_BASE_URL` (default
+  `https://api.openai.com/v1`, so Groq/OpenRouter/Ollama work too), `OPENAI_MODEL`
+  (default `gpt-4o-mini`).
+- Without a key the API returns 503 with a readable message and the panel shows
+  a "Not configured" notice — the rest of the app is unaffected.
+- Smoke test: `curl -s localhost:8000/api/ai/status` →
+  `{"configured":false,"model":"gpt-4o-mini"}`; `POST /api/ai/chat` with
+  `{"messages":[{"role":"user","content":"..."}]}` once the key is present.

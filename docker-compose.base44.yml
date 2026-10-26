@@ -28,6 +28,10 @@ services:
     volumes:
       - ./backend:/app
       - vm_data:/data
+    env_file:
+      # Platform-delivered secrets, e.g. OPENAI_API_KEY for the AI assistant.
+      - path: /run/base44/app.env
+        required: false
     environment:
       - BASE44_PREVIEW_MODE
       - PYTHONUNBUFFERED=1

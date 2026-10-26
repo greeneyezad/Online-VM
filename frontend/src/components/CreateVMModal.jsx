@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { X, RefreshCw } from 'lucide-react'
-import { createVM, getISOs } from '../api/client'
+import { createVM, getISOs, getSystemInfo } from '../api/client'
+import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
 
 const DEFAULT_FORM = {
   name: '',
@@ -11,9 +12,13 @@ const DEFAULT_FORM = {
   ram_mb: 2048,
   disk_size_gb: 20,
   disk_format: 'qcow2',
+  disk_bus: 'virtio',
+  disk_cache: 'writeback',
   iso_path: null,
   network_type: 'nat',
   network_interface: 'virtio-net-pci',
+  mac_address: '',
+  port_forwards: [],
   display_type: 'vnc',
   vnc_password: '',
   boot_order: 'dc',
@@ -57,6 +62,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
   const [tab, setTab] = useState(0)
   const [form, setForm] = useState(DEFAULT_FORM)
   const [isos, setIsos] = useState([])
+  const [system, setSystem] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [tagInput, setTagInput] = useState('')
@@ -68,8 +74,22 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
       setError(null)
       setTagInput('')
       fetchISOs()
+      fetchSystem()
     }
   }, [isOpen])
+
+  async function fetchSystem() {
+    try {
+      const data = await getSystemInfo()
+      setSystem(data)
+      // "host" is a KVM-only CPU model; without KVM fall back to "max".
+      if (!data.kvm_available) {
+        setForm(f => (f.cpu_model === 'host' ? { ...f, cpu_model: 'max' } : f))
+      }
+    } catch {
+      // non-fatal: the static option lists below are used instead
+    }
+  }
 
   async function fetchISOs() {
     try {
@@ -115,6 +135,8 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
       const payload = { ...form }
       if (!payload.iso_path) payload.iso_path = null
       if (!payload.vnc_password) payload.vnc_password = null
+      if (!payload.mac_address) payload.mac_address = null
+      payload.port_forwards = normalizePortForwards(payload.port_forwards)
       await createVM(payload)
       onCreated()
     } catch (err) {
@@ -135,6 +157,14 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
         </div>
 
         <div className="modal-body">
+          {system && (
+            <div className={`accel-note${system.kvm_available ? '' : ' accel-note-soft'}`}>
+              {system.kvm_available
+                ? 'KVM hardware acceleration is available on this host.'
+                : 'No KVM on this host — VMs run in software emulation (TCG): they boot and are usable, but slowly.'}
+            </div>
+          )}
+
           {/* Tabs */}
           <div className="tabs">
             {TAB_NAMES.map((name, i) => (
@@ -215,11 +245,15 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
               <div className="form-group">
                 <label className="form-label">CPU Model</label>
                 <select className="form-select" value={form.cpu_model} onChange={e => set('cpu_model', e.target.value)}>
-                  <option value="host">host (Recommended)</option>
-                  <option value="qemu64">qemu64</option>
-                  <option value="Haswell">Haswell</option>
-                  <option value="Skylake-Client">Skylake-Client</option>
-                  <option value="EPYC">EPYC</option>
+                  {(system?.cpu_models || ['host', 'qemu64', 'Haswell', 'Skylake-Client', 'EPYC']).map(model => (
+                    <option key={model} value={model}>
+                      {model === 'host'
+                        ? 'host — KVM passthrough (recommended)'
+                        : model === 'max'
+                          ? 'max — best emulation compatibility'
+                          : model}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
@@ -280,6 +314,38 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 </select>
               </div>
               <div className="form-group">
+                <label className="form-label">Disk Bus</label>
+                <select className="form-select" value={form.disk_bus} onChange={e => set('disk_bus', e.target.value)}>
+                  {(system?.disk_buses || ['virtio', 'scsi', 'sata']).map(bus => (
+                    <option key={bus} value={bus}>
+                      {bus === 'virtio'
+                        ? 'VirtIO — fastest (needs guest drivers)'
+                        : bus === 'scsi'
+                          ? 'SCSI — broad guest support'
+                          : 'SATA — widest guest compatibility'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Disk Cache</label>
+                <select className="form-select" value={form.disk_cache} onChange={e => set('disk_cache', e.target.value)}>
+                  {(system?.disk_cache_modes || ['writeback', 'none', 'writethrough', 'unsafe', 'directsync']).map(mode => (
+                    <option key={mode} value={mode}>
+                      {mode === 'writeback'
+                        ? 'writeback — balanced (default)'
+                        : mode === 'none'
+                          ? 'none — use host page cache'
+                          : mode === 'writethrough'
+                            ? 'writethrough — safest, slower'
+                            : mode === 'unsafe'
+                              ? 'unsafe — fastest, risk of data loss'
+                              : mode}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
                 <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>ISO Image</span>
                   <button className="btn-icon" style={{ width: 'auto', padding: '0.15rem 0.4rem' }} onClick={fetchISOs}>
@@ -320,6 +386,19 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                   <option value="rtl8139">Realtek — Legacy</option>
                 </select>
               </div>
+              <div className="form-group">
+                <label className="form-label">MAC Address</label>
+                <input
+                  className="form-input"
+                  placeholder="Auto-generated (52:54:00:xx:xx:xx)"
+                  value={form.mac_address || ''}
+                  onChange={e => set('mac_address', e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Port Forwards (NAT)</label>
+                <PortForwardEditor value={form.port_forwards} onChange={v => set('port_forwards', v)} />
+              </div>
             </div>
           )}
 
@@ -351,11 +430,18 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
           {/* Tab 5: Advanced */}
           {tab === 5 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <Toggle
-                checked={form.enable_kvm}
-                onChange={v => set('enable_kvm', v)}
-                label="Enable KVM hardware acceleration (requires KVM on host)"
-              />
+              <div>
+                <Toggle
+                  checked={form.enable_kvm}
+                  onChange={v => set('enable_kvm', v)}
+                  label="Enable KVM hardware acceleration (requires KVM on host)"
+                />
+                {system && !system.kvm_available && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+                    KVM isn't available here, so QEMU falls back to software emulation (TCG) automatically.
+                  </p>
+                )}
+              </div>
               <Toggle
                 checked={form.enable_uefi}
                 onChange={v => set('enable_uefi', v)}

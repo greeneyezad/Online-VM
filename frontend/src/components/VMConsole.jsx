@@ -1,19 +1,18 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Monitor, ChevronLeft, ExternalLink, Play, Square, Maximize2 } from 'lucide-react'
-import { getVM, startVM, stopVM } from '../api/client'
+import { useParams, Link } from 'react-router-dom'
+import { Monitor, Play, Square, Zap } from 'lucide-react'
+import { getVM, startVM, stopVM, forceStopVM, getSystemInfo } from '../api/client'
+import VNCViewer from './VNCViewer'
 
 export default function VMConsole() {
   const { id: vmId } = useParams()
-  const navigate = useNavigate()
   const [vm, setVM] = useState(null)
+  const [system, setSystem] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   async function fetchVM() {
-    setLoading(true)
-    setError(null)
     try {
       const data = await getVM(vmId)
       setVM(data)
@@ -25,40 +24,25 @@ export default function VMConsole() {
   }
 
   useEffect(() => {
+    setLoading(true)
     fetchVM()
+    getSystemInfo().then(setSystem).catch(() => {})
   }, [vmId])
 
-  async function handleStart() {
+  async function runAction(action) {
     setActionLoading(true)
+    setError(null)
     try {
-      await startVM(vmId)
+      await action()
       await fetchVM()
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Failed to start VM')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  async function handleStop() {
-    setActionLoading(true)
-    try {
-      await stopVM(vmId)
-      await fetchVM()
-    } catch (err) {
-      setError(err?.response?.data?.detail || 'Failed to stop VM')
+      setError(err?.response?.data?.detail || err.message || 'Action failed')
     } finally {
       setActionLoading(false)
     }
   }
 
   const isRunning = vm?.status === 'running'
-  const isStopped = vm?.status === 'stopped' || vm?.status === 'error'
-
-  const hostname = window.location.hostname
-  const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80')
-  const wsEndpoint = `ws://${hostname}:${port}/ws/vnc/${vmId}`
-  const noVNCUrl = `https://novnc.com/noVNC/vnc.html?host=${hostname}&port=${port}&path=ws/vnc/${vmId}`
 
   if (loading) {
     return (
@@ -93,12 +77,18 @@ export default function VMConsole() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span className={`badge badge-${vm?.status}`}>{vm?.status}</span>
           {isRunning ? (
-            <button className="btn-secondary" onClick={handleStop} disabled={actionLoading}>
-              <Square size={14} />
-              Stop
-            </button>
+            <>
+              <button className="btn-secondary" onClick={() => runAction(() => stopVM(vmId))} disabled={actionLoading}>
+                <Square size={14} />
+                Shut down
+              </button>
+              <button className="btn-secondary" onClick={() => runAction(() => forceStopVM(vmId))} disabled={actionLoading}>
+                <Zap size={14} />
+                Force stop
+              </button>
+            </>
           ) : (
-            <button className="btn-primary" onClick={handleStart} disabled={actionLoading}>
+            <button className="btn-primary" onClick={() => runAction(() => startVM(vmId))} disabled={actionLoading}>
               {actionLoading ? <span className="spinner" /> : <Play size={14} />}
               Start
             </button>
@@ -108,87 +98,50 @@ export default function VMConsole() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {/* Stopped state */}
-      {isStopped && (
+      {/* Console */}
+      {isRunning ? (
+        <>
+          <div className="console-meta">
+            <span>{vm.cpu_cores} vCPU</span>
+            <span>{vm.ram_mb >= 1024 ? `${(vm.ram_mb / 1024).toFixed(1)} GB` : `${vm.ram_mb} MB`} RAM</span>
+            <span>{vm.disk_size_gb} GB disk · {vm.disk_bus}</span>
+            <span>VNC :{vm.vnc_port}</span>
+            <span>
+              {system?.accelerator === 'kvm' ? 'KVM acceleration' : 'Software emulation (TCG)'}
+            </span>
+          </div>
+
+          {vm.display_type === 'vnc' ? (
+            <VNCViewer vmId={vmId} password={vm.vnc_password} />
+          ) : (
+            <div className="empty-state card" style={{ minHeight: '260px' }}>
+              <Monitor size={48} color="var(--border)" />
+              <h3>Headless VM</h3>
+              <p>This VM has no display enabled. Set the display type to VNC to see its screen here.</p>
+            </div>
+          )}
+        </>
+      ) : (
         <div className="empty-state card" style={{ minHeight: '260px' }}>
           <Monitor size={56} color="var(--border)" />
           <h3>{vm?.name}</h3>
-          <p>Start the VM to connect to the console</p>
-          <button className="btn-primary" onClick={handleStart} disabled={actionLoading}>
+          <p>Start the VM to open its console here</p>
+          <button className="btn-primary" onClick={() => runAction(() => startVM(vmId))} disabled={actionLoading}>
             {actionLoading ? <span className="spinner" /> : <Play size={14} />}
             Start VM
           </button>
         </div>
       )}
 
-      {/* Running state */}
-      {isRunning && (
-        <>
-          {/* Connection info */}
-          <div className="console-info-card">
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-              Console Connection
-            </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                  WebSocket VNC Endpoint
-                </div>
-                <code className="console-endpoint">{wsEndpoint}</code>
-              </div>
-              <div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                  Direct VNC Client
-                </div>
-                <code className="console-endpoint">{hostname}:{vm?.vnc_port || 5900}</code>
-              </div>
-            </div>
-            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <a
-                href={noVNCUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary"
-                style={{ textDecoration: 'none' }}
-              >
-                <ExternalLink size={14} />
-                Open in noVNC
-              </a>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', alignSelf: 'center' }}>
-                VNC Port: {vm?.vnc_port || 5900}
-              </span>
-            </div>
-          </div>
-
-          {/* Console placeholder */}
-          <div style={{
-            background: '#000',
-            border: '1px solid var(--border)',
-            borderRadius: '10px',
-            minHeight: '320px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            gap: '1rem',
-          }}>
-            <Monitor size={48} color="#333" />
-            <p style={{ color: '#555', fontSize: '0.875rem' }}>
-              Use the noVNC button above to open the interactive console
-            </p>
-          </div>
-
-          {/* Keyboard shortcuts */}
-          <div className="keyboard-shortcuts">
-            <h3>Keyboard Shortcuts (in noVNC)</h3>
-            <ul>
-              <li><kbd>Ctrl+Alt+Del</kbd> — Send Ctrl+Alt+Delete to VM</li>
-              <li><kbd>Ctrl+Alt+F1</kbd> – <kbd>F7</kbd> — Switch TTY</li>
-              <li><kbd>Ctrl+Alt+Backspace</kbd> — Kill X server</li>
-            </ul>
-          </div>
-        </>
-      )}
+      {/* Keyboard shortcuts */}
+      <div className="keyboard-shortcuts">
+        <h3>Console tips</h3>
+        <ul>
+          <li><kbd>Ctrl+Alt+Del</kbd> — send the key combo to the guest (toolbar button)</li>
+          <li>Click inside the screen to capture keyboard input</li>
+          <li>No bootable medium? Attach an ISO in the VM settings and boot from CD-ROM</li>
+        </ul>
+      </div>
     </div>
   )
 }

@@ -46,6 +46,10 @@ QEMU/KVM
 - Linux host with KVM support (`ls /dev/kvm`)
 - Docker >= 24 and Docker Compose v2
 
+KVM is optional: without `/dev/kvm` QEMU automatically falls back to software
+emulation (TCG). Guests still boot and the browser console works, but they are
+much slower. The Dashboard's create/settings forms show which accelerator is in use.
+
 **Manual:**
 - Linux with KVM (`kvm-ok` or `ls /dev/kvm`)
 - Python 3.11+

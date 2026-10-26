@@ -52,15 +52,14 @@ Everything below is inert outside the sandbox (`BASE44_PREVIEW_MODE` unset or �
    entirely and Vite keeps its default behaviour. Both variables are passed into the
    `web` service by the dev compose.
 3. The dev compose does **not** grant `privileged: true` or pass `/dev/kvm` (the
-   production compose does): the sandbox has no `/dev/kvm`. Consequence: creating,
-   listing and deleting VMs works, but **starting** a VM fails, because VMs default to
-   `-machine q35,accel=kvm` and the VNC console then has nothing to connect to. This is
-   an environment limitation, not an app bug — don't "fix" it by changing app code.
-   Creating a VM with KVM disabled (`enable_kvm: false`) still needs a QEMU-capable
-   host to actually boot a guest.
-4. `VMConsole` builds its WebSocket URL as `ws://<current host>:<port>/ws/vnc/<id>`. Over
-   the proxied HTTPS preview URL that would be a mixed-content `ws://` connection, so
-   the VNC console is not usable through the preview proxy even with a running VM.
+   production compose does): the sandbox has no `/dev/kvm`. QEMU therefore runs with
+   `-accel tcg` (software emulation) instead of KVM — guests really boot and are
+   usable, just slowly. `qemu_service.kvm_available()` decides this per host, so a
+   machine with `/dev/kvm` still gets hardware acceleration with no config change.
+4. The browser console is embedded with `@novnc/novnc`, which is pinned to **1.4.0**:
+   1.5+ ships top-level `await`, which Vite's default `es2020` build target (used by
+   `frontend/Dockerfile`'s production build) refuses. Don't bump it without raising the
+   build target.
 
 ## Verifying the stack
 
@@ -74,3 +73,31 @@ curl -s http://localhost:8000/health                                        # {"
 
 Compose healthchecks: `GET /health` on the API and `GET /` on the dev server.
 There is no test suite in this repository.
+
+## Virtualization backend
+
+- QEMU runs **inside the `api` container**; the sandbox host needs nothing installed.
+  `qemu_service.kvm_available()` chooses the accelerator: with `/dev/kvm` it uses
+  `accel=kvm` + `-cpu host`; without it, `-accel tcg,thread=multi` and `host` is mapped
+  to `max`. Guests boot either way — TCG is just slow.
+- `GET /api/system` reports what the host can really do (`kvm_available`, `accelerator`,
+  QEMU version, plus the option lists). The create/settings forms read it so the UI
+  never offers an option the host can't honour.
+- Disk buses are wired to real controllers: `virtio` → `-drive if=virtio`;
+  `scsi` → `-drive if=none` + `virtio-scsi-pci` + `scsi-hd`;
+  `sata` → `-drive if=none` + `ich9-ahci` + `ide-hd`. A bare `-drive if=scsi` fails on
+  q35 ("machine type does not support if=scsi"), which is why the devices are explicit.
+- A VNC password is set on the running instance through the QEMU monitor
+  (`change vnc password …`); `password=on` on its own rejects every client.
+- The browser console is noVNC (`@novnc/novnc` 1.4.0) connecting to
+  `wss://<same origin>/ws/vnc/<id>`; Vite proxies `/ws` to the API, which relays raw RFB
+  over TCP. No direct VNC port is exposed to the browser.
+- **Editing backend files orphans running guests.** `uvicorn --reload` replaces the
+  worker, and the `running_vms` registry is in memory, so QEMU processes keep running
+  (and keep their VNC port) with nothing tracking them. Kill them before starting VMs
+  again:
+  `for p in /proc/[0-9]*; do c=$(cat $p/comm 2>/dev/null); case "$c" in qemu-system*) kill ${p#/proc/};; esac; done`
+- Boot smoke test: upload an ISO (`curl -F "file=@x.iso" http://localhost:3000/api/isos/upload`),
+  create a VM with `boot_order: "dc"`, open `/vm/<id>` and press Start. VNC readiness:
+  `exec -T api python3 -c "import socket;s=socket.create_connection(('127.0.0.1',5900));print(s.recv(12))"`
+  → `b'RFB 003.008\n'`.

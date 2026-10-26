@@ -3,8 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { RefreshCw, Save, Trash2, Camera, RotateCcw } from 'lucide-react'
 import {
   getVM, updateVM, deleteVM, createSnapshot, listSnapshots,
-  restoreSnapshot, getISOs,
+  restoreSnapshot, getISOs, getSystemInfo,
 } from '../api/client'
+import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
 
 const TAB_NAMES = ['Basic', 'Hardware', 'Storage', 'Network', 'Display', 'Advanced']
 
@@ -54,6 +55,7 @@ export default function VMSettings() {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const [isos, setIsos] = useState([])
+  const [system, setSystem] = useState(null)
 
   // Snapshots
   const [snapshots, setSnapshots] = useState([])
@@ -78,9 +80,13 @@ export default function VMSettings() {
         ram_mb: data.ram_mb,
         disk_size_gb: data.disk_size_gb,
         disk_format: data.disk_format,
+        disk_bus: data.disk_bus || 'virtio',
+        disk_cache: data.disk_cache || 'writeback',
         iso_path: data.iso_path || null,
         network_type: data.network_type,
         network_interface: data.network_interface,
+        mac_address: data.mac_address || '',
+        port_forwards: data.port_forwards || [],
         display_type: data.display_type,
         vnc_password: data.vnc_password || '',
         boot_order: data.boot_order,
@@ -104,6 +110,7 @@ export default function VMSettings() {
   useEffect(() => {
     fetchVM()
     fetchISOs()
+    getSystemInfo().then(setSystem).catch(() => {})
   }, [vmId])
 
   function set(key, value) { setForm(f => ({ ...f, [key]: value })) }
@@ -120,6 +127,8 @@ export default function VMSettings() {
       const payload = { ...form }
       if (!payload.iso_path) payload.iso_path = null
       if (!payload.vnc_password) payload.vnc_password = null
+      if (!payload.mac_address) payload.mac_address = null
+      payload.port_forwards = normalizePortForwards(payload.port_forwards)
       await updateVM(vmId, payload)
       await fetchVM()
       showToast('Settings saved')
@@ -314,6 +323,22 @@ export default function VMSettings() {
             </select>
           </div>
           <div className="form-group">
+            <label className="form-label">Disk Bus</label>
+            <select className="form-select" value={form.disk_bus || 'virtio'} onChange={e => set('disk_bus', e.target.value)} disabled={inputDisabled}>
+              <option value="virtio">VirtIO — fastest (needs guest drivers)</option>
+              <option value="scsi">SCSI — broad guest support</option>
+              <option value="sata">SATA — widest guest compatibility</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Disk Cache</label>
+            <select className="form-select" value={form.disk_cache || 'writeback'} onChange={e => set('disk_cache', e.target.value)} disabled={inputDisabled}>
+              {(system?.disk_cache_modes || ['writeback', 'none', 'writethrough', 'unsafe', 'directsync']).map(mode => (
+                <option key={mode} value={mode}>{mode}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
             <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span>ISO Image</span>
               <button className="btn-icon" style={{ width: 'auto', padding: '0.15rem 0.4rem' }} onClick={fetchISOs} disabled={inputDisabled}>
@@ -350,6 +375,20 @@ export default function VMSettings() {
               <option value="rtl8139">Realtek — Legacy</option>
             </select>
           </div>
+          <div className="form-group">
+            <label className="form-label">MAC Address</label>
+            <input
+              className="form-input"
+              placeholder="Auto-generated"
+              value={form.mac_address || ''}
+              onChange={e => set('mac_address', e.target.value)}
+              disabled={inputDisabled}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Port Forwards (NAT)</label>
+            <PortForwardEditor value={form.port_forwards} onChange={v => set('port_forwards', v)} />
+          </div>
         </div>
       )}
 
@@ -375,7 +414,16 @@ export default function VMSettings() {
       {/* Tab 5: Advanced */}
       {tab === 5 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <Toggle checked={form.enable_kvm || false} onChange={v => set('enable_kvm', v)} label="Enable KVM hardware acceleration" disabled={inputDisabled} />
+          <div>
+            <Toggle checked={form.enable_kvm || false} onChange={v => set('enable_kvm', v)} label="Enable KVM hardware acceleration" disabled={inputDisabled} />
+            {system && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+                {system.kvm_available
+                  ? 'KVM is available on this host.'
+                  : "This host has no KVM, so QEMU uses software emulation (TCG)."}
+              </p>
+            )}
+          </div>
           <Toggle checked={form.enable_uefi || false} onChange={v => set('enable_uefi', v)} label="Enable UEFI firmware" disabled={inputDisabled} />
           <Toggle checked={form.usb_enabled || false} onChange={v => set('usb_enabled', v)} label="USB Tablet input" disabled={inputDisabled} />
           <Toggle checked={form.sound_enabled || false} onChange={v => set('sound_enabled', v)} label="Enable sound" disabled={inputDisabled} />

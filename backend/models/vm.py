@@ -11,6 +11,12 @@ class Snapshot(BaseModel):
     description: str = ""
 
 
+class PortForward(BaseModel):
+    protocol: str = "tcp"  # tcp | udp
+    host_port: int
+    guest_port: int
+
+
 class VMConfig(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -23,9 +29,13 @@ class VMConfig(BaseModel):
     disk_size_gb: int = 20
     disk_path: str = ""
     disk_format: str = "qcow2"
+    disk_bus: str = "virtio"       # virtio | scsi | ide
+    disk_cache: str = "writeback"  # writeback | none | writethrough | unsafe | directsync
     iso_path: Optional[str] = None
     network_type: str = "nat"
     network_interface: str = "virtio-net-pci"
+    mac_address: Optional[str] = None
+    port_forwards: List[PortForward] = []
     display_type: str = "vnc"
     vnc_port: int = 5900
     vnc_password: Optional[str] = None
@@ -50,9 +60,13 @@ class VMCreate(BaseModel):
     ram_mb: int = 2048
     disk_size_gb: int = 20
     disk_format: str = "qcow2"
+    disk_bus: str = "virtio"
+    disk_cache: str = "writeback"
     iso_path: Optional[str] = None
     network_type: str = "nat"
     network_interface: str = "virtio-net-pci"
+    mac_address: Optional[str] = None
+    port_forwards: List[PortForward] = []
     display_type: str = "vnc"
     vnc_password: Optional[str] = None
     boot_order: str = "dc"
@@ -72,8 +86,12 @@ class VMUpdate(BaseModel):
     cpu_model: Optional[str] = None
     ram_mb: Optional[int] = None
     iso_path: Optional[str] = None
+    disk_bus: Optional[str] = None
+    disk_cache: Optional[str] = None
     network_type: Optional[str] = None
     network_interface: Optional[str] = None
+    mac_address: Optional[str] = None
+    port_forwards: Optional[List[PortForward]] = None
     display_type: Optional[str] = None
     vnc_password: Optional[str] = None
     boot_order: Optional[str] = None

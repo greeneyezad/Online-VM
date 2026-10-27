@@ -29,7 +29,6 @@ export default function Layout({ children }) {
             <Server size={18} color="var(--accent)" />
             Online VM
           </h1>
-          <p>Hypervisor Manager</p>
         </div>
 
         <div className="sidebar-nav">

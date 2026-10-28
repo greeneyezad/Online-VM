@@ -47,6 +47,13 @@ class VMConfig(BaseModel):
     sound_enabled: bool = False
     sound_model: str = "ich9-intel-hda"
     shared_clipboard: bool = False
+    # Direct kernel boot (skip the BIOS/bootloader).
+    kernel_path: Optional[str] = None
+    initrd_path: Optional[str] = None
+    kernel_cmdline: str = ""
+    # Virtualization features.
+    nested_virt: bool = False
+    enable_vtpm: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     snapshots: List[Snapshot] = []
 
@@ -76,6 +83,11 @@ class VMCreate(BaseModel):
     usb_enabled: bool = True
     sound_enabled: bool = False
     sound_model: str = "ich9-intel-hda"
+    kernel_path: Optional[str] = None
+    initrd_path: Optional[str] = None
+    kernel_cmdline: str = ""
+    nested_virt: bool = False
+    enable_vtpm: bool = False
 
 
 class VMUpdate(BaseModel):
@@ -101,3 +113,8 @@ class VMUpdate(BaseModel):
     usb_enabled: Optional[bool] = None
     sound_enabled: Optional[bool] = None
     sound_model: Optional[str] = None
+    kernel_path: Optional[str] = None
+    initrd_path: Optional[str] = None
+    kernel_cmdline: Optional[str] = None
+    nested_virt: Optional[bool] = None
+    enable_vtpm: Optional[bool] = None

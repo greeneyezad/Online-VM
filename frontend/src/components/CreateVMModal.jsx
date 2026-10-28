@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { X, RefreshCw } from 'lucide-react'
-import { createVM, getISOs, getSystemInfo } from '../api/client'
+import { createVM, getISOs, getKernels, getSystemInfo } from '../api/client'
 import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
+import KernelBootEditor from './KernelBootEditor'
 
 const DEFAULT_FORM = {
   name: '',
@@ -15,6 +16,9 @@ const DEFAULT_FORM = {
   disk_bus: 'virtio',
   disk_cache: 'writeback',
   iso_path: null,
+  kernel_path: null,
+  initrd_path: null,
+  kernel_cmdline: '',
   network_type: 'nat',
   network_interface: 'virtio-net-pci',
   mac_address: '',
@@ -28,6 +32,8 @@ const DEFAULT_FORM = {
   usb_enabled: true,
   sound_enabled: false,
   sound_model: 'ich9-intel-hda',
+  nested_virt: false,
+  enable_vtpm: false,
 }
 
 const TAB_NAMES = ['Basic', 'Hardware', 'Storage', 'Network', 'Display', 'Advanced']
@@ -62,12 +68,15 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
   const [tab, setTab] = useState(0)
   const [form, setForm] = useState(DEFAULT_FORM)
   const [isos, setIsos] = useState([])
+  const [kernels, setKernels] = useState([])
   const [system, setSystem] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [tagInput, setTagInput] = useState('')
-  // QEMU allocates guest RAM up front, so never offer more than the host has.
-  const maxRam = system?.max_ram_mb || 65536
+  // Configure up to the app's 16 GB ceiling; the host still has the final say
+  // when the VM starts (QEMU allocates the whole guest RAM up front).
+  const maxRam = system?.ram_ceiling_mb || 16384
+  const hostMaxRam = system?.max_ram_mb || maxRam
 
   useEffect(() => {
     if (isOpen) {
@@ -76,6 +85,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
       setError(null)
       setTagInput('')
       fetchISOs()
+      fetchKernels()
       fetchSystem()
     }
   }, [isOpen])
@@ -104,6 +114,14 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
 
   function set(key, value) {
     setForm(f => ({ ...f, [key]: value }))
+  }
+
+  async function fetchKernels() {
+    try {
+      setKernels(await getKernels())
+    } catch {
+      // non-fatal
+    }
   }
 
   function addTag(value) {
@@ -138,6 +156,10 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
       if (!payload.iso_path) payload.iso_path = null
       if (!payload.vnc_password) payload.vnc_password = null
       if (!payload.mac_address) payload.mac_address = null
+      if (!payload.kernel_path) {
+        payload.initrd_path = null
+        payload.kernel_cmdline = ''
+      }
       payload.port_forwards = normalizePortForwards(payload.port_forwards)
       await createVM(payload)
       onCreated()
@@ -267,7 +289,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                   onChange={e => set('ram_mb', Number(e.target.value))}
                 />
                 <div className="quick-select">
-                  {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(n => n <= maxRam).map(n => (
+                  {[512, 1024, 2048, 4096, 8192, 16384].filter(n => n <= maxRam).map(n => (
                     <button
                       key={n}
                       className={form.ram_mb === n ? 'active' : ''}
@@ -275,6 +297,11 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                     >{formatRAM(n)}</button>
                   ))}
                 </div>
+                {form.ram_mb > hostMaxRam && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--warning, #e0a341)', marginTop: '0.35rem' }}>
+                    This host can only allocate {formatRAM(hostMaxRam)} right now — the VM will not start above that.
+                  </p>
+                )}
               </div>
               <div className="form-group">
                 <label className="form-label">Machine Type</label>
@@ -365,6 +392,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                   ))}
                 </select>
               </div>
+              <KernelBootEditor kernels={kernels} form={form} set={set} />
             </div>
           )}
 
@@ -448,6 +476,23 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 checked={form.enable_uefi}
                 onChange={v => set('enable_uefi', v)}
                 label="Enable UEFI firmware (for modern distros)"
+              />
+              <div>
+                <Toggle
+                  checked={form.enable_vtpm}
+                  onChange={v => set('enable_vtpm', v)}
+                  label="Enable vTPM 2.0 (required by Windows 11 and other modern OSes)"
+                />
+                {system && !system.vtpm_available && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: '0.35rem' }}>
+                    swtpm is not installed on this host, so the VM can't start with a vTPM.
+                  </p>
+                )}
+              </div>
+              <Toggle
+                checked={form.nested_virt}
+                onChange={v => set('nested_virt', v)}
+                label="Expose hardware virtualization to the guest (nested VMs — needs KVM)"
               />
               <Toggle
                 checked={form.usb_enabled}

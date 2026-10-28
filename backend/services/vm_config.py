@@ -9,11 +9,13 @@ DATA_DIR = "/data"
 VMS_FILE = "/data/vms.json"
 DISKS_DIR = "/data/disks"
 ISOS_DIR = "/data/isos"
+KERNELS_DIR = "/data/kernels"
 
 # Create directories on import
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DISKS_DIR, exist_ok=True)
 os.makedirs(ISOS_DIR, exist_ok=True)
+os.makedirs(KERNELS_DIR, exist_ok=True)
 
 _lock = asyncio.Lock()
 

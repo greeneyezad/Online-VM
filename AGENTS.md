@@ -117,6 +117,29 @@ There is no test suite in this repository.
   `eth0` DOWN, so `ip link set eth0 up` then `udhcpc -i eth0` is required before
   testing internet from inside a guest.
 
+## Modern-OS features
+
+- **RAM**: the create/settings forms offer up to `RAM_CEILING_MB` (16 GB). That is a
+  configuration ceiling only — `max_ram_mb()` still reports what this host can
+  really allocate (host RAM minus the 2 GB reserve), and starting a VM above it
+  fails with a readable error. On an 8 GB host the real limit is 5632 MB.
+- **vTPM 2.0** (`enable_vtpm`): each guest gets its own `swtpm` daemon
+  (`swtpm socket --tpm2 --terminate`), state in `/data/tpm/<vm_id>`, control socket
+  `/tmp/swtpm-<vm_id>.sock`, wired to QEMU as `-chardev socket` + `-tpmdev emulator`
+  + `tpm-crb` (q35) / `tpm-tis` (pc-i440fx). `swtpm` is installed in
+  `backend/Dockerfile.base44`; rebuilding that image is required after changes.
+  Force-stop kills the daemon by matching its socket in `/proc` (the image has no
+  `ps`), because `--terminate` only fires on a clean QEMU disconnect.
+  `GET /api/system` → `vtpm_available`.
+- **Nested virtualization** (`nested_virt`): appends `,+vmx` to `-cpu`, so a guest
+  can run its own hypervisor. Only meaningful with KVM — TCG cannot execute the
+  nested VMX feature.
+- **Direct kernel boot**: upload a kernel and initrd in the *Kernel Library*
+  (`/kernels` page, `/api/kernels`), then pick them in the VM's Storage tab
+  (`kernel_path`, `initrd_path`, `kernel_cmdline`). QEMU gets `-kernel` / `-initrd`
+  / `-append` and skips firmware and bootloader. Files live in `/data/kernels`.
+  A bad image fails fast with QEMU's own message (e.g. `invalid kernel header`).
+
 ## AI assistant
 
 `/api/ai/*` plus the floating panel in the UI (`components/AIAssistant.jsx`). The

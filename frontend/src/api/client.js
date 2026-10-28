@@ -28,3 +28,10 @@ export const uploadISO = (formData, onProgress) =>
     onUploadProgress: onProgress,
   }).then(r => r.data)
 export const deleteISO = (name) => api.delete(`/isos/${name}`).then(r => r.data)
+export const getKernels = () => api.get('/kernels').then(r => r.data)
+export const uploadKernel = (formData, onProgress) =>
+  api.post('/kernels/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: onProgress,
+  }).then(r => r.data)
+export const deleteKernel = (name) => api.delete(`/kernels/${name}`).then(r => r.data)

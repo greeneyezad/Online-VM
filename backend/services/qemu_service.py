@@ -1,6 +1,8 @@
 import asyncio
 import os
 import random
+import shutil
+import signal
 import socket
 import subprocess
 from functools import lru_cache
@@ -14,6 +16,12 @@ OVMF_PATH = "/usr/share/ovmf/OVMF.fd"
 
 # Memory kept for the API, the web dev server and the OS itself.
 HOST_RESERVE_MB = 2048
+
+# Upper bound offered for a single VM, even on a host with much more RAM.
+RAM_CEILING_MB = 16384
+
+# Per-VM swtpm state (vTPM NVRAM) lives here.
+TPM_DIR = "/data/tpm"
 
 # Maps vm_id -> {"process": asyncio.subprocess.Process, "monitor_socket": str, "vnc_port": int}
 running_vms: Dict[str, Any] = {}
@@ -63,8 +71,15 @@ def max_ram_mb() -> int:
     """
     total = host_ram_mb()
     if not total:
-        return 65536
-    return max(512, (total - HOST_RESERVE_MB) // 512 * 512)
+        return RAM_CEILING_MB
+    allocatable = (total - HOST_RESERVE_MB) // 512 * 512
+    return max(512, min(RAM_CEILING_MB, allocatable))
+
+
+@lru_cache(maxsize=1)
+def vtpm_available() -> bool:
+    """True when swtpm is installed — it is what actually backs a virtual TPM."""
+    return shutil.which("swtpm") is not None
 
 
 def capabilities() -> Dict[str, Any]:
@@ -81,6 +96,8 @@ def capabilities() -> Dict[str, Any]:
         "ovmf_available": os.path.exists(OVMF_PATH),
         "host_ram_mb": host_ram_mb(),
         "max_ram_mb": max_ram_mb(),
+        "ram_ceiling_mb": RAM_CEILING_MB,
+        "vtpm_available": vtpm_available(),
         "cpu_models": cpu_models,
         "machine_types": ["q35", "pc-i440fx"],
         "disk_buses": ["virtio", "scsi", "sata"],
@@ -135,6 +152,21 @@ def _netdev(vm: VMConfig) -> str:
     return netdev
 
 
+def tpm_socket(vm_id: str) -> str:
+    """Unix socket QEMU uses to talk to the VM's swtpm daemon."""
+    return f"/tmp/swtpm-{vm_id}.sock"
+
+
+def tpm_state_dir(vm_id: str) -> str:
+    """Directory holding the VM's persisted TPM state."""
+    return f"{TPM_DIR}/{vm_id}"
+
+
+def tpm_device(vm: VMConfig) -> str:
+    """CRB is the interface Windows 11 expects; TIS is the older one."""
+    return "tpm-crb" if (vm.machine_type or "q35") == "q35" else "tpm-tis"
+
+
 def build_qemu_args(vm: VMConfig) -> List[str]:
     """Build the complete qemu-system-x86_64 argument list for the given VM config."""
     accel = accelerator()
@@ -152,6 +184,9 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     cpu_model = vm.cpu_model or "host"
     if accel == "tcg" and cpu_model == "host":
         cpu_model = "max"
+    if vm.nested_virt:
+        # Expose VMX/SVM so the guest can run its own hypervisor (needs KVM).
+        cpu_model = f"{cpu_model},+vmx"
     args += ["-cpu", cpu_model]
     args += ["-smp", str(vm.cpu_cores)]
     args += ["-m", str(vm.ram_mb)]
@@ -179,6 +214,14 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     if vm.iso_path:
         args += ["-cdrom", vm.iso_path]
 
+    # Direct kernel boot: skips the firmware/bootloader entirely.
+    if vm.kernel_path:
+        args += ["-kernel", vm.kernel_path]
+        if vm.initrd_path:
+            args += ["-initrd", vm.initrd_path]
+        if vm.kernel_cmdline:
+            args += ["-append", vm.kernel_cmdline]
+
     # Boot order
     args += ["-boot", f"order={vm.boot_order or 'dc'}"]
 
@@ -203,6 +246,15 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     else:
         args += ["-display", "none"]
 
+    # Virtual TPM 2.0 (backed by a per-VM swtpm daemon). Windows 11 and other
+    # modern OSes refuse to install without one.
+    if vm.enable_vtpm:
+        args += [
+            "-chardev", f"socket,id=chrtpm,path={tpm_socket(vm.id)}",
+            "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
+            "-device", f"{tpm_device(vm)},tpmdev=tpm0",
+        ]
+
     # Monitor socket
     args += ["-monitor", f"unix:/tmp/qemu-{vm.id}.sock,server,nowait"]
 
@@ -220,6 +272,66 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
         args += ["-bios", OVMF_PATH]
 
     return args
+
+
+# ──────────────────────────────────────────────
+# vTPM
+# ──────────────────────────────────────────────
+
+async def _start_swtpm(vm: VMConfig) -> None:
+    """Launch the swtpm daemon that backs this VM's virtual TPM 2.0."""
+    os.makedirs(tpm_state_dir(vm.id), exist_ok=True)
+    sock = tpm_socket(vm.id)
+    if os.path.exists(sock):
+        os.remove(sock)
+
+    proc = await asyncio.create_subprocess_exec(
+        "swtpm", "socket", "--tpm2",
+        "--tpmstate", f"dir={tpm_state_dir(vm.id)}",
+        "--ctrl", f"type=unixio,path={sock}",
+        "--log", f"file={tpm_state_dir(vm.id)}/swtpm.log",
+        "--daemon", "--terminate",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError("swtpm failed to start the virtual TPM")
+
+    # QEMU needs the control socket to exist before it connects.
+    for _ in range(40):
+        if os.path.exists(sock):
+            return
+        await asyncio.sleep(0.05)
+    raise RuntimeError("swtpm control socket did not appear")
+
+
+def _cleanup_vtpm(vm_id: str) -> None:
+    """Stop this VM's swtpm daemon and drop its stale socket.
+
+    A graceful powerdown closes the chardev and swtpm exits on its own
+    (`--terminate`), but a force-stop kills QEMU abruptly, so the daemon is
+    terminated here by matching the socket path in /proc (the image has no ps).
+    """
+    sock = tpm_socket(vm_id)
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                cmdline = f.read().decode(errors="replace")
+        except OSError:
+            continue
+        if "swtpm" in cmdline and sock in cmdline:
+            try:
+                os.kill(int(entry), signal.SIGTERM)
+            except OSError:
+                pass
+    try:
+        if os.path.exists(sock):
+            os.remove(sock)
+    except OSError:
+        pass
 
 
 # ──────────────────────────────────────────────
@@ -241,6 +353,13 @@ async def start_vm(vm: VMConfig) -> None:
     # Create disk image if it doesn't exist yet
     if vm.disk_path and not os.path.exists(vm.disk_path):
         await create_disk(vm.disk_path, vm.disk_size_gb, vm.disk_format)
+
+    if vm.enable_vtpm:
+        if not vtpm_available():
+            raise RuntimeError(
+                "vTPM needs swtpm, which is not installed in this image"
+            )
+        await _start_swtpm(vm)
 
     # Pick a free VNC port
     vnc_port = find_free_vnc_port()
@@ -287,6 +406,7 @@ async def force_stop_vm(vm_id: str) -> None:
         entry["process"].kill()
         await entry["process"].wait()
         running_vms.pop(vm_id, None)
+    _cleanup_vtpm(vm_id)
 
 
 async def pause_vm(vm_id: str) -> None:

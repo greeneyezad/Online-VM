@@ -3,9 +3,10 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { RefreshCw, Save, Trash2, Camera, RotateCcw } from 'lucide-react'
 import {
   getVM, updateVM, deleteVM, createSnapshot, listSnapshots,
-  restoreSnapshot, getISOs, getSystemInfo,
+  restoreSnapshot, getISOs, getKernels, getSystemInfo,
 } from '../api/client'
 import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
+import KernelBootEditor from './KernelBootEditor'
 
 const TAB_NAMES = ['Basic', 'Hardware', 'Storage', 'Network', 'Display', 'Advanced']
 
@@ -55,6 +56,7 @@ export default function VMSettings() {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const [isos, setIsos] = useState([])
+  const [kernels, setKernels] = useState([])
   const [system, setSystem] = useState(null)
 
   // Snapshots
@@ -83,6 +85,11 @@ export default function VMSettings() {
         disk_bus: data.disk_bus || 'virtio',
         disk_cache: data.disk_cache || 'writeback',
         iso_path: data.iso_path || null,
+        kernel_path: data.kernel_path || null,
+        initrd_path: data.initrd_path || null,
+        kernel_cmdline: data.kernel_cmdline || '',
+        nested_virt: data.nested_virt || false,
+        enable_vtpm: data.enable_vtpm || false,
         network_type: data.network_type,
         network_interface: data.network_interface,
         mac_address: data.mac_address || '',
@@ -107,9 +114,14 @@ export default function VMSettings() {
     try { setIsos(await getISOs()) } catch {}
   }
 
+  async function fetchKernels() {
+    try { setKernels(await getKernels()) } catch {}
+  }
+
   useEffect(() => {
     fetchVM()
     fetchISOs()
+    fetchKernels()
     getSystemInfo().then(setSystem).catch(() => {})
   }, [vmId])
 
@@ -128,6 +140,10 @@ export default function VMSettings() {
       if (!payload.iso_path) payload.iso_path = null
       if (!payload.vnc_password) payload.vnc_password = null
       if (!payload.mac_address) payload.mac_address = null
+      if (!payload.kernel_path) {
+        payload.initrd_path = null
+        payload.kernel_cmdline = ''
+      }
       payload.port_forwards = normalizePortForwards(payload.port_forwards)
       await updateVM(vmId, payload)
       await fetchVM()
@@ -289,13 +305,18 @@ export default function VMSettings() {
           </div>
           <div className="form-group">
             <label className="form-label">RAM: {formatRAM(form.ram_mb || 2048)}</label>
-            <input type="range" className="form-range" min={512} max={system?.max_ram_mb || 65536} step={512}
+            <input type="range" className="form-range" min={512} max={system?.ram_ceiling_mb || 16384} step={512}
               value={form.ram_mb || 2048} onChange={e => set('ram_mb', Number(e.target.value))} disabled={inputDisabled} />
             <div className="quick-select">
-              {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(n => n <= (system?.max_ram_mb || 65536)).map(n => (
+              {[512, 1024, 2048, 4096, 8192, 16384].filter(n => n <= (system?.ram_ceiling_mb || 16384)).map(n => (
                 <button key={n} className={form.ram_mb === n ? 'active' : ''} onClick={() => !inputDisabled && set('ram_mb', n)} disabled={inputDisabled}>{formatRAM(n)}</button>
               ))}
             </div>
+            {system && form.ram_mb > system.max_ram_mb && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--warning, #e0a341)', marginTop: '0.35rem' }}>
+                This host can only allocate {formatRAM(system.max_ram_mb)} right now — the VM will not start above that.
+              </p>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Machine Type</label>
@@ -352,6 +373,7 @@ export default function VMSettings() {
               ))}
             </select>
           </div>
+          <KernelBootEditor kernels={kernels} form={form} set={set} disabled={inputDisabled} />
         </div>
       )}
 
@@ -425,6 +447,15 @@ export default function VMSettings() {
             )}
           </div>
           <Toggle checked={form.enable_uefi || false} onChange={v => set('enable_uefi', v)} label="Enable UEFI firmware" disabled={inputDisabled} />
+          <div>
+            <Toggle checked={form.enable_vtpm || false} onChange={v => set('enable_vtpm', v)} label="Enable vTPM 2.0 (required by Windows 11 and other modern OSes)" disabled={inputDisabled} />
+            {system && !system.vtpm_available && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: '0.35rem' }}>
+                swtpm is not installed on this host, so the VM can't start with a vTPM.
+              </p>
+            )}
+          </div>
+          <Toggle checked={form.nested_virt || false} onChange={v => set('nested_virt', v)} label="Expose hardware virtualization to the guest (nested VMs — needs KVM)" disabled={inputDisabled} />
           <Toggle checked={form.usb_enabled || false} onChange={v => set('usb_enabled', v)} label="USB Tablet input" disabled={inputDisabled} />
           <Toggle checked={form.sound_enabled || false} onChange={v => set('sound_enabled', v)} label="Enable sound" disabled={inputDisabled} />
           {form.sound_enabled && (

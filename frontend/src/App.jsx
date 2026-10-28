@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import VMList from './components/VMList'
 import ISOManager from './components/ISOManager'
+import KernelManager from './components/KernelManager'
 import VMConsole from './components/VMConsole'
 import VMSettings from './components/VMSettings'
 
@@ -49,6 +50,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<VMList />} />
           <Route path="/isos" element={<ISOManager />} />
+          <Route path="/kernels" element={<KernelManager />} />
           <Route path="/settings" element={<Navigate to="/" replace />} />
           <Route path="/vm/:id" element={<VMConsole />} />
           <Route path="/vm/:id/settings" element={<VMSettings />} />

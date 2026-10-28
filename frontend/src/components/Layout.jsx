@@ -1,11 +1,12 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Server, HardDrive, Settings, Monitor, Activity } from 'lucide-react'
+import { Server, HardDrive, Settings, Monitor, Activity, Cpu } from 'lucide-react'
 import AIAssistant from './AIAssistant'
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
   '/isos': 'ISO Library',
+  '/kernels': 'Kernel Library',
   '/settings': 'Settings',
 }
 
@@ -46,6 +47,13 @@ export default function Layout({ children }) {
           >
             <HardDrive size={16} />
             ISO Library
+          </NavLink>
+          <NavLink
+            to="/kernels"
+            className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+          >
+            <Cpu size={16} />
+            Kernel Library
           </NavLink>
         </div>
 

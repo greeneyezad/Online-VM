@@ -28,6 +28,19 @@ export const uploadISO = (formData, onProgress) =>
     onUploadProgress: onProgress,
   }).then(r => r.data)
 export const deleteISO = (name) => api.delete(`/isos/${name}`).then(r => r.data)
+export const exportVMUrl = (id, includeDisk = true) =>
+  `/api/vms/${id}/export?include_disk=${includeDisk ? 'true' : 'false'}`
+export const importVM = (formData, onProgress) =>
+  api.post('/vms/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: onProgress,
+  }).then(r => r.data)
+export const getDockerStatus = () => api.get('/docker/status').then(r => r.data)
+export const getDockerContainers = () => api.get('/docker/containers').then(r => r.data)
+export const getDockerImages = () => api.get('/docker/images').then(r => r.data)
+export const dockerAction = (id, action) => api.post(`/docker/containers/${id}/${action}`).then(r => r.data)
+export const getDockerLogs = (id, tail = 200) =>
+  api.get(`/docker/containers/${id}/logs`, { params: { tail } }).then(r => r.data)
 export const getKernels = () => api.get('/kernels').then(r => r.data)
 export const uploadKernel = (formData, onProgress) =>
   api.post('/kernels/upload', formData, {

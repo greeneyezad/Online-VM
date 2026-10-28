@@ -17,6 +17,10 @@ A full-stack web application that lets you create, manage, and connect to QEMU/K
 - **USB & Sound**: USB tablet input, Intel HDA / AC97 / SoundBlaster sound
 - **Snapshots**: Create, restore, and delete VM snapshots via QEMU monitor
 - **ISO Management**: Upload and manage ISO images through the web UI
+- **Import / export**: Download any stopped VM as a `.tar.gz` archive (config + optional disk)
+  and import it on another Online VM host
+- **Docker tab**: See the host's containers and images, and start / stop / restart
+  containers or read their logs (requires mounting `/var/run/docker.sock`)
 - **Dark UI**: Responsive dark-themed React frontend
 
 ## Architecture
@@ -67,6 +71,10 @@ docker-compose up --build
 
 Open http://localhost in your browser.
 
+The Docker tab needs the host daemon mounted into the backend container
+(`/var/run/docker.sock:/var/run/docker.sock`, already in `docker-compose.yml`).
+Without it the tab shows "Docker engine not available" and everything else works.
+
 ## Manual Setup
 
 ### Backend
@@ -113,6 +121,13 @@ Frontend dev server runs on http://localhost:5173 and proxies API calls to the b
 | GET | /api/vms/{id}/snapshots | List snapshots |
 | POST | /api/vms/{id}/snapshot/{sid}/restore | Restore snapshot |
 | DELETE | /api/vms/{id}/snapshot/{sid} | Delete snapshot |
+| GET | /api/vms/{id}/export?include_disk=true | Download VM archive |
+| POST | /api/vms/import | Import a VM archive |
+| GET | /api/docker/status | Docker engine status |
+| GET | /api/docker/containers | List containers |
+| POST | /api/docker/containers/{id}/{start\|stop\|restart} | Control a container |
+| GET | /api/docker/containers/{id}/logs | Container logs |
+| GET | /api/docker/images | List images |
 | GET | /api/isos | List ISOs |
 | POST | /api/isos/upload | Upload ISO |
 | DELETE | /api/isos/{name} | Delete ISO |

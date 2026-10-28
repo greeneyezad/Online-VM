@@ -28,6 +28,10 @@ services:
     volumes:
       - ./backend:/app
       - vm_data:/data
+      # Docker tab: the API talks to the host's Docker Engine over this socket
+      # (read/write — it starts/stops containers). Without it the Docker tab
+      # reports "not available" and the rest of the app works normally.
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       # Platform-delivered secrets, e.g. OPENAI_API_KEY for the AI assistant.
       - path: /run/base44/app.env

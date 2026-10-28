@@ -13,12 +13,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import vms, isos, kernels, websocket, system, ai
+from routers import vms, isos, kernels, websocket, system, ai, docker, vm_transfer
 app.include_router(vms.router, prefix="/api")
+app.include_router(vm_transfer.router, prefix="/api")
 app.include_router(isos.router, prefix="/api")
 app.include_router(kernels.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(docker.router, prefix="/api")
 app.include_router(websocket.router)
 
 

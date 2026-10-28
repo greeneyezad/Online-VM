@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import VMList from './components/VMList'
 import ISOManager from './components/ISOManager'
 import KernelManager from './components/KernelManager'
+import DockerManager from './components/DockerManager'
 import VMConsole from './components/VMConsole'
 import VMSettings from './components/VMSettings'
 
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/" element={<VMList />} />
           <Route path="/isos" element={<ISOManager />} />
           <Route path="/kernels" element={<KernelManager />} />
+          <Route path="/docker" element={<DockerManager />} />
           <Route path="/settings" element={<Navigate to="/" replace />} />
           <Route path="/vm/:id" element={<VMConsole />} />
           <Route path="/vm/:id/settings" element={<VMSettings />} />

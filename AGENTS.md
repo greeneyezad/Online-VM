@@ -140,6 +140,51 @@ There is no test suite in this repository.
   / `-append` and skips firmware and bootloader. Files live in `/data/kernels`.
   A bad image fails fast with QEMU's own message (e.g. `invalid kernel header`).
 
+## Docker tab
+
+`/docker` (`components/DockerManager.jsx`, `/api/docker/*`) lists the host's
+containers and images and starts/stops/restarts containers or shows their logs.
+
+- The API talks to the Docker Engine's HTTP API over the Unix socket with
+  `httpx.AsyncHTTPTransport(uds=…)` (`services/docker_service.py`) — no docker CLI
+  in the image. The socket is bind-mounted by **both** compose files; without it
+  `/api/docker/status` returns `available: false` and the tab explains how to mount
+  it. `DOCKER_SOCKET` overrides the path.
+- The API version prefix is negotiated once from `/version`.
+- Containers are **protected** when they belong to the API container's own compose
+  project (matched through the container's hostname = its Docker id): stopping them
+  would kill the app, so the UI disables their actions and the API returns 400.
+- Logs are demultiplexed from Docker's 8-byte frame headers (non-TTY containers).
+- The socket grants full Docker control to the app: it is a trust boundary, not a
+  read-only view. Keep it out of untrusted deployments.
+
+## VM import / export
+
+`/api/vms/{id}/export` streams a `.tar.gz` (`manifest.json` + optional `disk.<fmt>`),
+`POST /api/vms/import` (multipart `file`, optional `name`) creates a new VM from it
+(`routers/vm_transfer.py`).
+
+- Export is refused while QEMU is running for that VM (`qemu.is_running`); the tar is
+  produced by `tar -czhf -` on a temp dir in `/data/exports` holding the manifest and a
+  symlink to the disk, so nothing is copied and no extra disk space is used.
+- Import writes the upload to `/data/imports`, reads `manifest.json`, streams the disk
+  member to `/data/disks/<new-id>.<fmt>` and cleans up in `finally` (including on a
+  bad archive, which returns 400). It always assigns a fresh id, stops the VM, clears
+  runtime state, uniquifies the name (`Name (2)`), and drops `iso_path` / `kernel_path`
+  / `initrd_path` references whose files are not present on this host.
+- Metadata-only exports are valid: the imported VM gets a disk path and QEMU creates
+  the empty image on first start.
+- Smoke test (uses a throwaway VM; clean up the record *and* `/data/disks/<id>.<fmt>`
+  because deleting a VM does not delete its disk):
+
+```bash
+VM=$(curl -s -X POST localhost:3000/api/vms -H 'Content-Type: application/json' \
+  -d '{"name":"t","ram_mb":512,"disk_size_gb":1,"cpu_cores":1}')
+ID=$(echo "$VM" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+curl -s -o /tmp/vm.tar.gz "localhost:3000/api/vms/$ID/export?include_disk=false"
+curl -s -F "file=@/tmp/vm.tar.gz" localhost:3000/api/vms/import
+```
+
 ## AI assistant
 
 `/api/ai/*` plus the floating panel in the UI (`components/AIAssistant.jsx`). The

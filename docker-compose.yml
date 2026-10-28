@@ -7,6 +7,8 @@ services:
       - "8000:8000"
     volumes:
       - vm_data:/data
+      # Docker tab: control containers on the host from the app.
+      - /var/run/docker.sock:/var/run/docker.sock
     devices:
       - /dev/kvm:/dev/kvm
     privileged: true

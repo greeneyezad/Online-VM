@@ -1,13 +1,15 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Server, Plus, Activity, CheckCircle, XCircle, Database } from 'lucide-react'
+import { Server, Plus, Activity, CheckCircle, XCircle, Database, Upload } from 'lucide-react'
 import useVMs from '../hooks/useVMs'
 import VMCard from './VMCard'
 import CreateVMModal from './CreateVMModal'
+import ImportVMModal from './ImportVMModal'
 
 export default function VMList() {
   const { vms, loading, error, refresh, startVM, stopVM, pauseVM, resumeVM, resetVM, deleteVM } = useVMs()
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const navigate = useNavigate()
 
   const totalVMs = vms.length
@@ -23,10 +25,16 @@ export default function VMList() {
           <h1>Virtual Machines</h1>
           <span className="badge badge-stopped">{totalVMs}</span>
         </div>
-        <button className="btn-primary" onClick={() => setShowCreateModal(true)}>
-          <Plus size={16} />
-          Create VM
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="btn-secondary" onClick={() => setShowImportModal(true)}>
+            <Upload size={16} />
+            Import VM
+          </button>
+          <button className="btn-primary" onClick={() => setShowCreateModal(true)}>
+            <Plus size={16} />
+            Create VM
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -102,6 +110,13 @@ export default function VMList() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onCreated={() => { setShowCreateModal(false); refresh() }}
+      />
+
+      {/* Import VM modal */}
+      <ImportVMModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImported={() => { setShowImportModal(false); refresh() }}
       />
     </div>
   )

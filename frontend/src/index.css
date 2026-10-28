@@ -1203,3 +1203,19 @@ kbd {
 .ai-panel-footer .btn-primary {
   padding: 0.5rem 0.7rem;
 }
+
+/* ── Docker log viewer ── */
+.log-view {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem;
+  font-family: monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 55vh;
+  overflow: auto;
+}

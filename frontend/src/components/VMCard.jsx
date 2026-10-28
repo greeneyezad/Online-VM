@@ -2,8 +2,9 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Play, Square, Pause, Monitor, Settings, Trash2,
-  Cpu, MemoryStick, HardDrive, RotateCcw, Disc
+  Cpu, MemoryStick, HardDrive, RotateCcw, Disc, Download
 } from 'lucide-react'
+import ExportVMModal from './ExportVMModal'
 
 function formatRAM(mb) {
   if (mb < 1024) return `${mb} MB`
@@ -16,6 +17,7 @@ function StatusBadge({ status }) {
 
 export default function VMCard({ vm, onStart, onStop, onPause, onResume, onReset, onDelete, onOpenConsole }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   const isRunning = vm.status === 'running'
   const isStopped = vm.status === 'stopped'
@@ -141,6 +143,16 @@ export default function VMCard({ vm, onStart, onStop, onPause, onResume, onReset
           <Monitor size={14} />
         </button>
 
+        {/* Export */}
+        <button
+          className="btn-icon"
+          title={isStopped ? 'Export VM' : 'Stop the VM to export it'}
+          onClick={() => setShowExport(true)}
+          disabled={!isStopped}
+        >
+          <Download size={14} />
+        </button>
+
         {/* Settings */}
         <Link to={`/vm/${vm.id}/settings`} className="btn-icon" title="VM settings">
           <Settings size={14} />
@@ -177,6 +189,8 @@ export default function VMCard({ vm, onStart, onStop, onPause, onResume, onReset
           </button>
         )}
       </div>
+
+      <ExportVMModal vm={vm} isOpen={showExport} onClose={() => setShowExport(false)} />
     </div>
   )
 }

@@ -1,12 +1,13 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Server, HardDrive, Settings, Monitor, Activity, Cpu } from 'lucide-react'
+import { Server, HardDrive, Settings, Monitor, Activity, Cpu, Container } from 'lucide-react'
 import AIAssistant from './AIAssistant'
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
   '/isos': 'ISO Library',
   '/kernels': 'Kernel Library',
+  '/docker': 'Docker',
   '/settings': 'Settings',
 }
 
@@ -54,6 +55,13 @@ export default function Layout({ children }) {
           >
             <Cpu size={16} />
             Kernel Library
+          </NavLink>
+          <NavLink
+            to="/docker"
+            className={({ isActive }) => `sidebar-nav-link${isActive ? ' active' : ''}`}
+          >
+            <Container size={16} />
+            Docker
           </NavLink>
         </div>
 

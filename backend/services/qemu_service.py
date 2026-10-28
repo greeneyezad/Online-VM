@@ -131,16 +131,34 @@ def host_ram_mb() -> int:
     return 0
 
 
-def max_ram_mb() -> int:
-    """Largest guest RAM this host can really hand to a single VM.
+def host_swap_mb() -> int:
+    """Swap the host can page guest RAM into, in MB (0 when there is none)."""
+    total = 0
+    try:
+        with open("/proc/swaps") as f:
+            next(f, None)  # header line
+            for line in f:
+                fields = line.split()
+                if len(fields) >= 3:
+                    total += int(fields[2]) // 1024  # kB -> MB
+    except (OSError, ValueError):
+        pass
+    return total
 
-    QEMU allocates the whole guest RAM up front, so asking for more than the
-    host has free fails with an opaque "Cannot allocate memory".
+
+def max_ram_mb() -> int:
+    """Largest guest RAM this host can back for a single VM.
+
+    QEMU maps the whole guest RAM up front and commits pages as the guest
+    touches them, so physical RAM *plus* swap is what a VM can really use —
+    asking for more is what gets QEMU killed by the OOM killer. In the sandbox
+    the `swap` compose service provides that swap, which is what makes the
+    16 GB ceiling reachable on an 8 GB host.
     """
     total = host_ram_mb()
     if not total:
         return RAM_CEILING_MB
-    allocatable = (total - HOST_RESERVE_MB) // 512 * 512
+    allocatable = (total + host_swap_mb() - HOST_RESERVE_MB) // 512 * 512
     return max(512, min(RAM_CEILING_MB, allocatable))
 
 
@@ -164,6 +182,7 @@ def capabilities() -> Dict[str, Any]:
         "qemu_version": qemu_version(),
         "ovmf_available": os.path.exists(OVMF_PATH),
         "host_ram_mb": host_ram_mb(),
+        "host_swap_mb": host_swap_mb(),
         "max_ram_mb": max_ram_mb(),
         "ram_ceiling_mb": RAM_CEILING_MB,
         "vtpm_available": vtpm_available(),

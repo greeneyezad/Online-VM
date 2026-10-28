@@ -126,10 +126,22 @@ There is no test suite in this repository.
 
 ## Modern-OS features
 
-- **RAM**: the create/settings forms offer up to `RAM_CEILING_MB` (16 GB). That is a
-  configuration ceiling only — `max_ram_mb()` still reports what this host can
-  really allocate (host RAM minus the 2 GB reserve), and starting a VM above it
-  fails with a readable error. On an 8 GB host the real limit is 5632 MB.
+- **RAM**: the create/settings forms offer up to `RAM_CEILING_MB` (16 GB).
+  `max_ram_mb()` reports what this host can really back: host RAM **plus swap**
+  minus the 2 GB reserve, capped at 16 GB — creating/starting a VM above it fails
+  with a readable error. `GET /api/system` exposes `host_ram_mb`, `host_swap_mb`
+  and `max_ram_mb`.
+  - This sandbox has 8 GB of RAM, so the `swap` compose service creates
+    `/data/swapfile` (default 11264 MB, override with `SWAP_MB`) and enables it
+    once at startup — that is what makes a 16 GB VM startable here. `swapon`
+    needs CAP_SYS_ADMIN, hence `privileged: true` on that one service; it serves
+    nothing and mounts only `vm_data`. Remove the service (or set `SWAP_MB`) to
+    trade VM RAM for disk — the swapfile costs its size on the same volume as the
+    VM disks.
+  - With swap the guest really can use all 16 GB, but pages beyond physical RAM
+    are on disk: a 16 GB guest on this host is very slow and effectively runs on
+    ~6 GB in RAM. Verify the backing store with
+    `docker compose -f docker-compose.base44.yml exec -T api cat /proc/swaps`.
 - **vTPM 2.0** (`enable_vtpm`): each guest gets its own `swtpm` process
   (`swtpm socket --tpm2 --terminate`, log `/data/tpm/<vm_id>/swtpm.log,level=3`),
   state in `/data/tpm/<vm_id>`, control socket `/tmp/swtpm-<vm_id>.sock`, wired to

@@ -98,7 +98,42 @@ services:
       start_period: 60s
     restart: on-failure
 
+  swap:
+    # Backing store for guest RAM above the host's physical memory: this sandbox
+    # has 8 GB, so the 16 GB VM ceiling only works with swap behind it. Without
+    # it QEMU is OOM-killed as soon as the guest touches those pages.
+    # `swapon` needs CAP_SYS_ADMIN, which only a privileged container gets — this
+    # service does nothing else and is not routed to the browser.
+    image: debian:12-slim
+    labels:
+      base44.project: "VM swap"
+      base44.kind: "infra"
+    privileged: true
+    working_dir: /data
+    command:
+      - sh
+      - -ec
+      - |
+        if [ ! -f /data/swapfile ]; then
+          fallocate -l "$${SWAP_MB:-11264}M" /data/swapfile
+          chmod 600 /data/swapfile
+          mkswap /data/swapfile >/dev/null
+        fi
+        grep -q /data/swapfile /proc/swaps || swapon /data/swapfile
+        exec sleep infinity
+    volumes:
+      - vm_data:/data
+    healthcheck:
+      # `/proc/swaps` is kernel-wide, so this is the same view the API reads.
+      test: ["CMD-SHELL", "grep -qs /data/swapfile /proc/swaps || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: on-failure
+
 volumes:
-  # VM definitions (/data/vms.json), disk images and uploaded ISOs.
+  # VM definitions (/data/vms.json), disk images, uploaded ISOs and the
+  # /data/swapfile backing guest RAM.
   vm_data:
   web_node_modules:

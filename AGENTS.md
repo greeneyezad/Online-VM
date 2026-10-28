@@ -54,11 +54,17 @@ Everything below is inert outside the sandbox (`BASE44_PREVIEW_MODE` unset or �
    `BASE44_SANDBOX_HOST_DOMAIN` is set. Otherwise the `allowedHosts` key is omitted
    entirely and Vite keeps its default behaviour. Both variables are passed into the
    `web` service by the dev compose.
-3. The dev compose does **not** grant `privileged: true` or pass `/dev/kvm` (the
-   production compose does): the sandbox has no `/dev/kvm`. QEMU therefore runs with
-   `-accel tcg` (software emulation) instead of KVM — guests really boot and are
-   usable, just slowly. `qemu_service.kvm_available()` decides this per host, so a
-   machine with `/dev/kvm` still gets hardware acceleration with no config change.
+3. KVM: the dev compose does **not** grant `privileged: true`, and this sandbox has no
+   KVM at all (the kernel exposes no `/dev/kvm`, `/proc/misc` has no `kvm`, and the CPU
+   reports no virtualization extensions — the sandbox is itself a guest without nested
+   virtualization). QEMU therefore runs `-accel tcg` here; guests really boot and are
+   usable, just slowly. On a KVM-capable host no config change is needed: the api
+   service carries `device_cgroup_rules: ["c 10:232 rwm"]` and
+   `qemu_service._ensure_kvm_device()` creates the `/dev/kvm` node with `mknod` when the
+   kernel exposes KVM, so `kvm_available()` turns true on its own. Detection opens the
+   device and checks `KVM_GET_API_VERSION`, so a node that merely exists (bind-mounted
+   directory, device on a kernel without KVM) is never reported as acceleration;
+   `/api/system` → `kvm_reason` explains any refusal in the UI.
 4. The browser console is embedded with `@novnc/novnc`, which is pinned to **1.4.0**:
    1.5+ ships top-level `await`, which Vite's default `es2020` build target (used by
    `frontend/Dockerfile`'s production build) refuses. Don't bump it without raising the
@@ -80,9 +86,10 @@ There is no test suite in this repository.
 ## Virtualization backend
 
 - QEMU runs **inside the `api` container**; the sandbox host needs nothing installed.
-  `qemu_service.kvm_available()` chooses the accelerator: with `/dev/kvm` it uses
-  `accel=kvm` + `-cpu host`; without it, `-accel tcg,thread=multi` and `host` is mapped
-  to `max`. Guests boot either way — TCG is just slow.
+  `qemu_service.accelerator(vm)` chooses the accelerator per VM: a VM with
+  `enable_kvm: false` is forced onto TCG even on a KVM host, otherwise `/dev/kvm` wins.
+  With KVM it uses `accel=kvm` + `-cpu host`; without it, `-accel tcg,thread=multi` and
+  `host` is mapped to `max`. Guests boot either way — TCG is just slow.
 - `GET /api/system` reports what the host can really do (`kvm_available`, `accelerator`,
   QEMU version, plus the option lists). The create/settings forms read it so the UI
   never offers an option the host can't honour.
@@ -123,14 +130,22 @@ There is no test suite in this repository.
   configuration ceiling only — `max_ram_mb()` still reports what this host can
   really allocate (host RAM minus the 2 GB reserve), and starting a VM above it
   fails with a readable error. On an 8 GB host the real limit is 5632 MB.
-- **vTPM 2.0** (`enable_vtpm`): each guest gets its own `swtpm` daemon
-  (`swtpm socket --tpm2 --terminate`), state in `/data/tpm/<vm_id>`, control socket
-  `/tmp/swtpm-<vm_id>.sock`, wired to QEMU as `-chardev socket` + `-tpmdev emulator`
-  + `tpm-crb` (q35) / `tpm-tis` (pc-i440fx). `swtpm` is installed in
-  `backend/Dockerfile.base44`; rebuilding that image is required after changes.
-  Force-stop kills the daemon by matching its socket in `/proc` (the image has no
-  `ps`), because `--terminate` only fires on a clean QEMU disconnect.
-  `GET /api/system` → `vtpm_available`.
+- **vTPM 2.0** (`enable_vtpm`): each guest gets its own `swtpm` process
+  (`swtpm socket --tpm2 --terminate`, log `/data/tpm/<vm_id>/swtpm.log,level=3`),
+  state in `/data/tpm/<vm_id>`, control socket `/tmp/swtpm-<vm_id>.sock`, wired to
+  QEMU as `-chardev socket` + `-tpmdev emulator` + `tpm-crb` (q35) / `tpm-tis`
+  (pc-i440fx). `swtpm` is installed in `backend/Dockerfile.base44`.
+  - swtpm is a **tracked child** of the API worker, never `--daemon`: daemonizing
+    reparents it to PID 1, whose exit is never reaped, so every cycle left a zombie.
+  - `_start_swtpm()` calls `_stop_vtpm()` first, and a failed QEMU launch stops it
+    too. Without that, a failed start leaked a second swtpm holding the same state
+    directory — two backends on one TPM NVRAM, which is exactly what silently broke
+    vTPM. The sweep in `_stop_vtpm()` finds leftovers by state dir *and* socket in
+    `/proc` (the image has no `ps`), because `--terminate` only fires on a clean QEMU
+    disconnect.
+  - Verify: start a vTPM VM, then `grep -c SWTPM_IO /data/tpm/<id>/swtpm.log` must be
+    non-zero (QEMU is exchanging TPM 2.0 commands) and exactly one `swtpm` process may
+    reference that VM's state dir. `GET /api/system` → `vtpm_available`.
 - **Nested virtualization** (`nested_virt`): appends `,+vmx` to `-cpu`, so a guest
   can run its own hypervisor. Only meaningful with KVM — TCG cannot execute the
   nested VMX feature.

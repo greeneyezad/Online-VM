@@ -468,7 +468,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 />
                 {system && !system.kvm_available && (
                   <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
-                    KVM isn't available here, so QEMU falls back to software emulation (TCG) automatically.
+                    {system.kvm_reason || "KVM isn't available here, so QEMU falls back to software emulation (TCG) automatically."}
                   </p>
                 )}
               </div>

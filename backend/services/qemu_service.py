@@ -1,16 +1,20 @@
 import asyncio
+import fcntl
 import os
 import random
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 from functools import lru_cache
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from models.vm import VMConfig
 
 KVM_DEVICE = "/dev/kvm"
+KVM_MAJOR, KVM_MINOR = 10, 232
+KVM_GET_API_VERSION = 0xAE00  # _IO(0xAE, 0x00) — returns 12 on every KVM kernel
 QEMU_BINARY = "qemu-system-x86_64"
 OVMF_PATH = "/usr/share/ovmf/OVMF.fd"
 
@@ -32,13 +36,77 @@ running_vms: Dict[str, Any] = {}
 # ──────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
+def _kernel_exposes_kvm() -> bool:
+    """True when the running kernel registered the KVM misc device."""
+    try:
+        with open("/proc/misc") as f:
+            return any(line.split()[-1] == "kvm" for line in f)
+    except OSError:
+        return False
+
+
+def _ensure_kvm_device() -> None:
+    """Create /dev/kvm inside the container when the host kernel has KVM.
+
+    A container gets its own /dev, so a host KVM device is only visible when it
+    is passed in explicitly. When the kernel does support KVM (it shows up in
+    /proc/misc) and the service is allowed the device's cgroup rule (see
+    docker-compose.base44.yml), mknod is enough — KVM then works with no
+    compose edit. On hosts without KVM this is a no-op.
+    """
+    if os.path.exists(KVM_DEVICE) or not _kernel_exposes_kvm():
+        return
+    try:
+        os.mknod(KVM_DEVICE, stat.S_IFCHR | 0o666, os.makedev(KVM_MAJOR, KVM_MINOR))
+    except OSError:
+        pass
+
+
+def _kvm_device_usable() -> bool:
+    """Open /dev/kvm and ask it for its API version.
+
+    A node that merely exists is not enough: a bind-mounted directory or a
+    device node on a kernel without KVM both fail on open/ioctl and must never
+    be reported as hardware acceleration.
+    """
+    try:
+        fd = os.open(KVM_DEVICE, os.O_RDWR | os.O_CLOEXEC)
+    except OSError:
+        return False
+    try:
+        return fcntl.ioctl(fd, KVM_GET_API_VERSION) == 12
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+@lru_cache(maxsize=1)
 def kvm_available() -> bool:
-    """True when /dev/kvm is present and usable by this container."""
-    return os.path.exists(KVM_DEVICE) and os.access(KVM_DEVICE, os.R_OK | os.W_OK)
+    """True when KVM really works for this container, not just when a node exists."""
+    _ensure_kvm_device()
+    return _kvm_device_usable()
 
 
-def accelerator() -> str:
-    """The accelerator QEMU will use: 'kvm' when available, else 'tcg'."""
+def kvm_unavailable_reason() -> str:
+    """User-facing explanation of why KVM can't be used ("" when it can)."""
+    if kvm_available():
+        return ""
+    if os.path.exists(KVM_DEVICE):
+        return ("/dev/kvm exists but cannot be opened, so QEMU stays on software "
+                "emulation. Pass the device into the container (--device /dev/kvm).")
+    if _kernel_exposes_kvm():
+        return ("The host kernel supports KVM but the device is not usable in this "
+                "container. Mount /dev/kvm or allow the device cgroup rule.")
+    return ("This host exposes no KVM: the kernel has no /dev/kvm and the CPU offers "
+            "no virtualization extensions (the app is running inside a guest "
+            "without nested virtualization).")
+
+
+def accelerator(vm: Optional[VMConfig] = None) -> str:
+    """The accelerator QEMU will use for this VM: 'kvm' when available, else 'tcg'."""
+    if vm is not None and not vm.enable_kvm:
+        return "tcg"
     return "kvm" if kvm_available() else "tcg"
 
 
@@ -92,6 +160,7 @@ def capabilities() -> Dict[str, Any]:
     return {
         "accelerator": accel,
         "kvm_available": accel == "kvm",
+        "kvm_reason": kvm_unavailable_reason(),
         "qemu_version": qemu_version(),
         "ovmf_available": os.path.exists(OVMF_PATH),
         "host_ram_mb": host_ram_mb(),
@@ -169,7 +238,7 @@ def tpm_device(vm: VMConfig) -> str:
 
 def build_qemu_args(vm: VMConfig) -> List[str]:
     """Build the complete qemu-system-x86_64 argument list for the given VM config."""
-    accel = accelerator()
+    accel = accelerator(vm)
     args = [QEMU_BINARY, "-name", vm.name]
 
     # Machine type + accelerator. TCG is the fallback when the host has no KVM,
@@ -278,8 +347,28 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
 # vTPM
 # ──────────────────────────────────────────────
 
-async def _start_swtpm(vm: VMConfig) -> None:
-    """Launch the swtpm daemon that backs this VM's virtual TPM 2.0."""
+def _tpm_log_tail(vm_id: str) -> str:
+    """Last lines of this VM's swtpm log, for readable start failures."""
+    try:
+        with open(f"{tpm_state_dir(vm_id)}/swtpm.log", errors="replace") as f:
+            lines = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
+    except OSError:
+        return ""
+    return lines[-1] if lines else ""
+
+
+async def _start_swtpm(vm: VMConfig) -> asyncio.subprocess.Process:
+    """Launch the swtpm process that backs this VM's virtual TPM 2.0.
+
+    Any daemon left behind by an earlier run is stopped first: two swtpm
+    instances on one state directory fight over its lock and corrupt the
+    guest's TPM NVRAM, so this must happen before every start.
+
+    swtpm stays a tracked child (no `--daemon`): daemonizing reparents it to
+    PID 1, whose exit is never reaped, so every stop/start cycle left another
+    zombie behind.
+    """
+    await _stop_vtpm(vm.id)
     os.makedirs(tpm_state_dir(vm.id), exist_ok=True)
     sock = tpm_socket(vm.id)
     if os.path.exists(sock):
@@ -289,44 +378,105 @@ async def _start_swtpm(vm: VMConfig) -> None:
         "swtpm", "socket", "--tpm2",
         "--tpmstate", f"dir={tpm_state_dir(vm.id)}",
         "--ctrl", f"type=unixio,path={sock}",
-        "--log", f"file={tpm_state_dir(vm.id)}/swtpm.log",
-        "--daemon", "--terminate",
+        "--log", f"file={tpm_state_dir(vm.id)}/swtpm.log,level=3",
+        "--terminate",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    await proc.wait()
-    if proc.returncode != 0:
-        raise RuntimeError("swtpm failed to start the virtual TPM")
+    # Reap it whenever it exits (a guest powerdown closes the chardev and
+    # `--terminate` ends the process).
+    asyncio.create_task(_reap_tpm(proc))
 
     # QEMU needs the control socket to exist before it connects.
-    for _ in range(40):
+    for _ in range(60):
         if os.path.exists(sock):
-            return
+            return proc
+        if proc.returncode is not None:
+            break
         await asyncio.sleep(0.05)
-    raise RuntimeError("swtpm control socket did not appear")
+
+    if proc.returncode is None:
+        proc.terminate()
+        await proc.wait()
+        raise RuntimeError("swtpm control socket did not appear")
+    detail = _tpm_log_tail(vm.id)
+    raise RuntimeError(
+        "swtpm could not start the virtual TPM"
+        + (f": {detail}" if detail else "")
+    )
 
 
-def _cleanup_vtpm(vm_id: str) -> None:
-    """Stop this VM's swtpm daemon and drop its stale socket.
+async def _reap_tpm(proc: asyncio.subprocess.Process) -> None:
+    """Wait for a tracked swtpm process so its exit is reaped."""
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
+def _pid_state(pid: int) -> str:
+    """One-letter process state from /proc ("" when the process is gone)."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("State:"):
+                    return line.split()[1]
+    except OSError:
+        pass
+    return ""
+
+
+async def _stop_vtpm(vm_id: str) -> None:
+    """Stop this VM's swtpm process(es) and drop the stale socket.
 
     A graceful powerdown closes the chardev and swtpm exits on its own
-    (`--terminate`), but a force-stop kills QEMU abruptly, so the daemon is
-    terminated here by matching the socket path in /proc (the image has no ps).
+    (`--terminate`), but a force-stop kills QEMU abruptly. Leftovers from an
+    earlier API worker are found through /proc (the image has no ps); the
+    tracked child is awaited so it is reaped rather than left as a zombie.
     """
+    entry = running_vms.get(vm_id)
+    own = entry.get("tpm_process") if entry else None
     sock = tpm_socket(vm_id)
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
+    state_dir = tpm_state_dir(vm_id)
+
+    stale = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if own is not None and pid == own.pid:
             continue
         try:
-            with open(f"/proc/{entry}/cmdline", "rb") as f:
+            with open(f"/proc/{name}/cmdline", "rb") as f:
                 cmdline = f.read().decode(errors="replace")
         except OSError:
             continue
-        if "swtpm" in cmdline and sock in cmdline:
+        # Match the state dir as well as the socket: a daemon from an earlier
+        # start may hold the same TPM state under a different socket path.
+        if "swtpm" in cmdline and (sock in cmdline or state_dir in cmdline):
             try:
-                os.kill(int(entry), signal.SIGTERM)
+                os.kill(pid, signal.SIGTERM)
+                stale.append(pid)
             except OSError:
                 pass
+
+    if own is not None:
+        if own.returncode is None:
+            own.terminate()
+        try:
+            await asyncio.wait_for(own.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            own.kill()
+            await own.wait()
+        if entry is not None:
+            entry.pop("tpm_process", None)
+
+    # Wait for stale processes to release the state lock (a zombie is exited).
+    for _ in range(40):
+        if all(_pid_state(pid) in ("", "Z") for pid in stale):
+            break
+        await asyncio.sleep(0.05)
+
     try:
         if os.path.exists(sock):
             os.remove(sock)
@@ -354,12 +504,13 @@ async def start_vm(vm: VMConfig) -> None:
     if vm.disk_path and not os.path.exists(vm.disk_path):
         await create_disk(vm.disk_path, vm.disk_size_gb, vm.disk_format)
 
+    tpm_process = None
     if vm.enable_vtpm:
         if not vtpm_available():
             raise RuntimeError(
                 "vTPM needs swtpm, which is not installed in this image"
             )
-        await _start_swtpm(vm)
+        tpm_process = await _start_swtpm(vm)
 
     # Pick a free VNC port
     vnc_port = find_free_vnc_port()
@@ -378,6 +529,7 @@ async def start_vm(vm: VMConfig) -> None:
         "process": process,
         "monitor_socket": monitor_socket,
         "vnc_port": vnc_port,
+        "tpm_process": tpm_process,
     }
 
     # Give QEMU a moment to fail fast (bad config, missing firmware, ...) so the
@@ -385,6 +537,9 @@ async def start_vm(vm: VMConfig) -> None:
     await asyncio.sleep(0.8)
     if process.returncode is not None:
         stderr = (await process.stderr.read()).decode(errors="replace").strip()
+        # QEMU never connected to the TPM, so `--terminate` won't fire: drop the
+        # daemon here or the next start inherits a locked state directory.
+        await _stop_vtpm(vm.id)
         running_vms.pop(vm.id, None)
         raise RuntimeError(stderr or f"QEMU exited with code {process.returncode}")
 
@@ -405,8 +560,8 @@ async def force_stop_vm(vm_id: str) -> None:
     if entry:
         entry["process"].kill()
         await entry["process"].wait()
-        running_vms.pop(vm_id, None)
-    _cleanup_vtpm(vm_id)
+    await _stop_vtpm(vm_id)
+    running_vms.pop(vm_id, None)
 
 
 async def pause_vm(vm_id: str) -> None:

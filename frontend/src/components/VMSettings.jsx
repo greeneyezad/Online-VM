@@ -442,7 +442,7 @@ export default function VMSettings() {
               <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
                 {system.kvm_available
                   ? 'KVM is available on this host.'
-                  : "This host has no KVM, so QEMU uses software emulation (TCG)."}
+                  : (system.kvm_reason || "This host has no KVM, so QEMU uses software emulation (TCG).")}
               </p>
             )}
           </div>

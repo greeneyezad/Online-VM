@@ -36,6 +36,12 @@ services:
       # Platform-delivered secrets, e.g. OPENAI_API_KEY for the AI assistant.
       - path: /run/base44/app.env
         required: false
+    # Lets the API create /dev/kvm itself when the host kernel exposes KVM
+    # (qemu_service._ensure_kvm_device) — so hardware acceleration works on any
+    # KVM-capable host with no compose edit. The rule covers only the KVM
+    # character device and is inert on hosts without KVM.
+    device_cgroup_rules:
+      - "c 10:232 rwm"
     environment:
       - BASE44_PREVIEW_MODE
       - PYTHONUNBUFFERED=1

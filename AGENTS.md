@@ -88,8 +88,19 @@ There is no test suite in this repository.
 - QEMU runs **inside the `api` container**; the sandbox host needs nothing installed.
   `qemu_service.accelerator(vm)` chooses the accelerator per VM: a VM with
   `enable_kvm: false` is forced onto TCG even on a KVM host, otherwise `/dev/kvm` wins.
-  With KVM it uses `accel=kvm` + `-cpu host`; without it, `-accel tcg,thread=multi` and
-  `host` is mapped to `max`. Guests boot either way — TCG is just slow.
+  With KVM it uses `accel=kvm` + `-cpu host`; without it,
+  `-accel tcg,thread=multi,tb-size=<MB>` and `host` is mapped to `max`. Guests boot
+  either way — TCG is just slow.
+  - KVM is a **kernel** accelerator: it needs `vmx`/`svm` in the guest CPU plus the
+    kvm module, so it cannot be created from userspace. This sandbox has neither
+    (`/proc/cpuinfo` shows only `hypervisor`, `/proc/misc` has no `kvm`), and no
+    amount of app code or container privilege changes that — the truthful answer is
+    "run the stack on a KVM-capable host", where detection turns it on by itself.
+    Never fake `kvm_available`: `-accel kvm` on this host fails outright.
+  - `tcg_tb_size_mb()` sizes the translation-block cache per vCPU thread (32–256 MB,
+    ~1 GB total across vCPUs). It is per-thread in MTTCG, so scaling it with the core
+    count avoids both a starved cache on 1–2 vCPU guests and gigabytes of waste on
+    a 16 vCPU one.
 - `GET /api/system` reports what the host can really do (`kvm_available`, `accelerator`,
   QEMU version, plus the option lists). The create/settings forms read it so the UI
   never offers an option the host can't honour.

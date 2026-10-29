@@ -103,6 +103,17 @@ def kvm_unavailable_reason() -> str:
             "without nested virtualization).")
 
 
+def tcg_tb_size_mb(cores: int) -> int:
+    """Translation-block cache per vCPU thread for TCG, in MB.
+
+    Every vCPU thread gets its own buffer, so this is sized against the vCPU
+    count to keep the total near 1 GB: a bigger cache speeds up the
+    boot/install work software emulation spends nearly all its time on without
+    competing with the guest's own RAM.
+    """
+    return max(32, min(256, 1024 // max(1, cores)))
+
+
 def accelerator(vm: Optional[VMConfig] = None) -> str:
     """The accelerator QEMU will use for this VM: 'kvm' when available, else 'tcg'."""
     if vm is not None and not vm.enable_kvm:
@@ -265,7 +276,8 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     if accel == "kvm":
         args += ["-machine", f"{vm.machine_type},accel=kvm"]
     else:
-        args += ["-machine", vm.machine_type, "-accel", "tcg,thread=multi"]
+        args += ["-machine", vm.machine_type,
+                 "-accel", f"tcg,thread=multi,tb-size={tcg_tb_size_mb(vm.cpu_cores)}"]
 
     # CPU model: "host" passes the host CPU through and is KVM-only, so under
     # TCG it becomes "max" (everything the emulator supports).

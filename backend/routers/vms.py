@@ -1,3 +1,4 @@
+import os
 import uuid
 from typing import Optional
 from fastapi import APIRouter, HTTPException
@@ -21,6 +22,34 @@ def _check_ram(ram_mb: int) -> None:
         )
 
 
+async def _convert_disk_format(vm: VMConfig, new_fmt: str) -> None:
+    """Rewrite the VM's disk image into another format.
+
+    The format setting is not cosmetic: QEMU opens the image with that driver,
+    so a disk whose bytes are still qcow2 must be converted (or the guest sees
+    a corrupt disk). The old image is removed only after a successful convert.
+    """
+    if not vm.disk_path or not os.path.exists(vm.disk_path):
+        vm.disk_path = f"{store.DISKS_DIR}/{vm.id}.{new_fmt}"
+        vm.disk_format = new_fmt
+        return
+
+    new_path = f"{store.DISKS_DIR}/{vm.id}.{new_fmt}"
+    try:
+        await qemu.convert_disk(vm.disk_path, new_path, new_fmt, vm.disk_format)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Disk conversion to {new_fmt} failed: {exc}")
+
+    old_path = vm.disk_path
+    vm.disk_path = new_path
+    vm.disk_format = new_fmt
+    if os.path.abspath(old_path) != os.path.abspath(new_path):
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+
 # ──────────────────────────────────────────────
 # VM CRUD
 # ──────────────────────────────────────────────
@@ -34,6 +63,9 @@ async def list_vms():
 @router.post("/vms", status_code=201)
 async def create_vm(body: VMCreate):
     _check_ram(body.ram_mb)
+    body.disk_format = (body.disk_format or "qcow2").lower()
+    if body.disk_format not in qemu.DISK_FORMATS:
+        raise HTTPException(status_code=400, detail=f"Unsupported disk format '{body.disk_format}'")
     vm_id = str(uuid.uuid4())
     disk_path = f"{store.DISKS_DIR}/{vm_id}.{body.disk_format}"
 
@@ -65,6 +97,14 @@ async def update_vm(vm_id: str, body: VMUpdate):
     update_data = body.model_dump(exclude_unset=True)
     if "ram_mb" in update_data:
         _check_ram(update_data["ram_mb"])
+
+    new_fmt = (update_data.get("disk_format") or "").lower()
+    if new_fmt:
+        if new_fmt not in qemu.DISK_FORMATS:
+            raise HTTPException(status_code=400, detail=f"Unsupported disk format '{new_fmt}'")
+        if new_fmt != (vm.disk_format or "qcow2"):
+            await _convert_disk_format(vm, new_fmt)
+
     for key, value in update_data.items():
         setattr(vm, key, value)
 
@@ -222,6 +262,11 @@ async def create_snapshot(vm_id: str, body: SnapshotCreate):
         raise HTTPException(status_code=404, detail="VM not found")
     if not qemu.is_running(vm_id):
         raise HTTPException(status_code=400, detail="VM must be running to take a snapshot")
+    if (vm.disk_format or "qcow2") != "qcow2":
+        raise HTTPException(
+            status_code=400,
+            detail="Internal snapshots need a qcow2 disk — change the VM's disk format first",
+        )
 
     snapshot = Snapshot(name=body.name, description=body.description)
 

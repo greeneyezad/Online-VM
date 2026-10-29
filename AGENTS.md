@@ -113,11 +113,23 @@ There is no test suite in this repository.
 - The browser console is noVNC (`@novnc/novnc` 1.4.0) connecting to
   `wss://<same origin>/ws/vnc/<id>`; Vite proxies `/ws` to the API, which relays raw RFB
   over TCP. No direct VNC port is exposed to the browser.
-- **Editing backend files orphans running guests.** `uvicorn --reload` replaces the
-  worker, and the `running_vms` registry is in memory, so QEMU processes keep running
-  (and keep their VNC port) with nothing tracking them. Kill them before starting VMs
-  again:
-  `for p in /proc/[0-9]*; do c=$(cat $p/comm 2>/dev/null); case "$c" in qemu-system*) kill ${p#/proc/};; esac; done`
+- **A reloaded worker re-adopts running guests.** `uvicorn --reload` replaces the
+  worker on every backend edit and the `running_vms` registry is in memory, so a guest
+  started before the reload used to keep running untracked: the UI called it stopped
+  and a second start would have opened the same disk image twice. `main.py`'s lifespan
+  now calls `qemu_service.adopt_running()` (matches each QEMU process to its VM through
+  the `file=` disk path on its command line, needs `/tmp/qemu-<id>.sock`) and clears
+  "running"/"paused" on VMs whose process is gone. Adopted entries carry `pid` instead
+  of a `process` object, which `is_running()`/`force_stop_vm()` handle. Guests do NOT
+  survive a full `docker compose restart api`; only reloads are covered.
+- **Disk formats** (`disk_format`): `qcow2`, `raw`, `vhd`, `vhdx`. A `.vhd` image is
+  QEMU's **`vpc`** driver (`disk_driver()` maps it, and `qemu-img create -o
+  subformat=dynamic` keeps it thin); `.vhdx` uses the `vhdx` driver. The format string
+  is not cosmetic — QEMU opens the image with that driver, so changing it in the VM
+  settings makes `PUT /api/vms/{id}` rewrite the disk with `qemu-img convert`
+  (`_convert_disk_format()`), deleting the old image only after a successful convert.
+  Internal snapshots (`savevm`) are qcow2-only; `POST /vms/{id}/snapshot` returns 400
+  for the other formats.
 - Boot time under TCG (no KVM): a 3 GB Ubuntu 24.04 live-server ISO reaches the
   installer language menu in roughly 7 minutes; SeaBIOS prints
   `Boot failed: Could not read CDROM` instantly when the ISO is not attached, so
@@ -169,6 +181,22 @@ There is no test suite in this repository.
   - Verify: start a vTPM VM, then `grep -c SWTPM_IO /data/tpm/<id>/swtpm.log` must be
     non-zero (QEMU is exchanging TPM 2.0 commands) and exactly one `swtpm` process may
     reference that VM's state dir. `GET /api/system` → `vtpm_available`.
+- **Secure Boot** (`secure_boot`, needs `enable_uefi`): Windows 11's Setup refuses to
+  install without it, and plain `OVMF.fd` has no keys. This switches to the split
+  SMM-enabled firmware — `-machine q35,smm=on`, read-only
+  `/usr/share/OVMF/OVMF_CODE_4M.secboot.fd` as pflash unit 0, a **per-VM** copy of
+  `/usr/share/OVMF/OVMF_VARS_4M.ms.fd` (Microsoft keys) in `/data/uefi/<vm_id>_VARS.fd`
+  as unit 1, plus `-global driver=cfi.pflash01,property=secure,value=on`. Both firmware
+  files must exist (`/api/system` → `secure_boot_available`); a start without the vars
+  copy is created automatically, and a start with Secure Boot but no UEFI raises a
+  readable error instead of silently dropping the feature.
+- **Quick profiles** (`frontend/src/lib/vmProfiles.js`): one-click presets that fill
+  real form fields — nothing hidden. The Windows 11 profile sets 4 vCPU / 8 GB /
+  64 GB qcow2, `machine_type: q35`, UEFI + Secure Boot + vTPM 2.0, **SATA** disk and
+  **e1000** NIC because Setup ships no VirtIO drivers (virtio would have no disk and no
+  network until drivers are installed). Verify a profile VM starts by checking its QEMU
+  command line for `q35,smm=on`, the `secboot` pflash drives, `tpm-crb` and
+  `format=vhdx`/`vpc` for those disk formats.
 - **Nested virtualization** (`nested_virt`): appends `,+vmx` to `-cpu`, so a guest
   can run its own hypervisor. Only meaningful with KVM — TCG cannot execute the
   nested VMX feature.

@@ -3,6 +3,8 @@ import { X, RefreshCw } from 'lucide-react'
 import { createVM, getISOs, getKernels, getSystemInfo } from '../api/client'
 import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
 import KernelBootEditor from './KernelBootEditor'
+import { QUICK_PROFILES } from '../lib/vmProfiles'
+import { DISK_FORMAT_HINTS } from '../lib/diskFormats'
 
 const DEFAULT_FORM = {
   name: '',
@@ -28,6 +30,7 @@ const DEFAULT_FORM = {
   boot_order: 'dc',
   enable_kvm: true,
   enable_uefi: false,
+  secure_boot: false,
   machine_type: 'q35',
   usb_enabled: true,
   sound_enabled: false,
@@ -189,6 +192,25 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
             </div>
           )}
 
+          {/* Quick profiles */}
+          <div className="form-group">
+            <label className="form-label">Quick profile</label>
+            <div className="quick-select">
+              {QUICK_PROFILES.map(profile => (
+                <button
+                  key={profile.id}
+                  title={profile.description}
+                  onClick={() => setForm(f => ({ ...f, ...profile.values }))}
+                >
+                  {profile.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+              Fills in the hardware and firmware the OS requires — review the tabs, then pick its ISO in Storage.
+            </p>
+          </div>
+
           {/* Tabs */}
           <div className="tabs">
             {TAB_NAMES.map((name, i) => (
@@ -338,8 +360,9 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
               <div className="form-group">
                 <label className="form-label">Disk Format</label>
                 <select className="form-select" value={form.disk_format} onChange={e => set('disk_format', e.target.value)}>
-                  <option value="qcow2">qcow2 — Dynamic allocation, snapshots supported</option>
-                  <option value="raw">raw — Fixed size, slightly faster</option>
+                  {(system?.disk_formats || Object.keys(DISK_FORMAT_HINTS)).map(fmt => (
+                    <option key={fmt} value={fmt}>{DISK_FORMAT_HINTS[fmt] || fmt}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
@@ -477,6 +500,23 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 onChange={v => set('enable_uefi', v)}
                 label="Enable UEFI firmware (for modern distros)"
               />
+              <div>
+                <Toggle
+                  checked={form.secure_boot}
+                  onChange={v => set('secure_boot', v)}
+                  label="Enable Secure Boot (needs UEFI — required by Windows 11)"
+                />
+                {form.secure_boot && !form.enable_uefi && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--warning, #e0a341)', marginTop: '0.35rem' }}>
+                    Secure Boot needs UEFI firmware — enable it above.
+                  </p>
+                )}
+                {system && !system.secure_boot_available && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: '0.35rem' }}>
+                    Secure Boot firmware (OVMF secboot) is not installed on this host.
+                  </p>
+                )}
+              </div>
               <div>
                 <Toggle
                   checked={form.enable_vtpm}

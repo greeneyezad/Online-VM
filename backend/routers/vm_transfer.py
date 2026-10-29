@@ -162,7 +162,7 @@ def _extract_archive(archive_path: str, new_id: str, existing_names: List[str],
         raw: Dict[str, Any] = manifest.get("vm") or {}
         disk_info = manifest.get("disk") or {}
         disk_format = (disk_info.get("format") or raw.get("disk_format") or "qcow2").lower()
-        if disk_format not in ("qcow2", "raw"):
+        if disk_format not in qemu.DISK_FORMATS:
             disk_format = "qcow2"
 
         disk_path = os.path.join(DISKS_DIR, f"{new_id}.{disk_format}")

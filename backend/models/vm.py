@@ -42,6 +42,7 @@ class VMConfig(BaseModel):
     boot_order: str = "dc"
     enable_kvm: bool = True
     enable_uefi: bool = False
+    secure_boot: bool = False
     machine_type: str = "q35"
     usb_enabled: bool = True
     sound_enabled: bool = False
@@ -79,6 +80,7 @@ class VMCreate(BaseModel):
     boot_order: str = "dc"
     enable_kvm: bool = True
     enable_uefi: bool = False
+    secure_boot: bool = False
     machine_type: str = "q35"
     usb_enabled: bool = True
     sound_enabled: bool = False
@@ -98,6 +100,7 @@ class VMUpdate(BaseModel):
     cpu_model: Optional[str] = None
     ram_mb: Optional[int] = None
     iso_path: Optional[str] = None
+    disk_format: Optional[str] = None
     disk_bus: Optional[str] = None
     disk_cache: Optional[str] = None
     network_type: Optional[str] = None
@@ -109,6 +112,7 @@ class VMUpdate(BaseModel):
     boot_order: Optional[str] = None
     enable_kvm: Optional[bool] = None
     enable_uefi: Optional[bool] = None
+    secure_boot: Optional[bool] = None
     machine_type: Optional[str] = None
     usb_enabled: Optional[bool] = None
     sound_enabled: Optional[bool] = None

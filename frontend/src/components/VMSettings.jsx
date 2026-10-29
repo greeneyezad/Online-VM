@@ -7,6 +7,8 @@ import {
 } from '../api/client'
 import PortForwardEditor, { normalizePortForwards } from './PortForwardEditor'
 import KernelBootEditor from './KernelBootEditor'
+import { QUICK_PROFILES } from '../lib/vmProfiles'
+import { DISK_FORMAT_HINTS } from '../lib/diskFormats'
 
 const TAB_NAMES = ['Basic', 'Hardware', 'Storage', 'Network', 'Display', 'Advanced']
 
@@ -99,6 +101,7 @@ export default function VMSettings() {
         boot_order: data.boot_order,
         enable_kvm: data.enable_kvm,
         enable_uefi: data.enable_uefi,
+        secure_boot: data.secure_boot || false,
         machine_type: data.machine_type,
         usb_enabled: data.usb_enabled,
         sound_enabled: data.sound_enabled,
@@ -130,6 +133,11 @@ export default function VMSettings() {
   function showToast(msg) {
     setToast(msg)
     setTimeout(() => setToast(null), 2500)
+  }
+
+  function applyProfile(profile) {
+    setForm(f => ({ ...f, ...profile.values }))
+    showToast(`${profile.label} profile applied — review, then save`)
   }
 
   async function handleSave() {
@@ -232,6 +240,23 @@ export default function VMSettings() {
       )}
 
       {error && <div className="error-banner">{error}</div>}
+
+      {/* Quick profiles */}
+      {!isRunning && (
+        <div className="form-group">
+          <label className="form-label">Quick profile</label>
+          <div className="quick-select">
+            {QUICK_PROFILES.map(profile => (
+              <button key={profile.id} title={profile.description} onClick={() => applyProfile(profile)}>
+                {profile.label}
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+            Applies the hardware, firmware and disk settings that OS requires — review the tabs, then Save Changes.
+          </p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="tabs">
@@ -339,9 +364,15 @@ export default function VMSettings() {
           <div className="form-group">
             <label className="form-label">Disk Format</label>
             <select className="form-select" value={form.disk_format || 'qcow2'} onChange={e => set('disk_format', e.target.value)} disabled={inputDisabled}>
-              <option value="qcow2">qcow2 — Dynamic allocation, snapshots supported</option>
-              <option value="raw">raw — Fixed size, slightly faster</option>
+              {(system?.disk_formats || Object.keys(DISK_FORMAT_HINTS)).map(fmt => (
+                <option key={fmt} value={fmt}>{DISK_FORMAT_HINTS[fmt] || fmt}</option>
+              ))}
             </select>
+            {form.disk_format && vm.disk_format && form.disk_format !== vm.disk_format && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--warning, #e0a341)', marginTop: '0.35rem' }}>
+                Saving converts the existing disk image to {form.disk_format} — the whole disk is copied, so it can take a while.
+              </p>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Disk Bus</label>
@@ -447,6 +478,19 @@ export default function VMSettings() {
             )}
           </div>
           <Toggle checked={form.enable_uefi || false} onChange={v => set('enable_uefi', v)} label="Enable UEFI firmware" disabled={inputDisabled} />
+          <div>
+            <Toggle checked={form.secure_boot || false} onChange={v => set('secure_boot', v)} label="Enable Secure Boot (needs UEFI — required by Windows 11)" disabled={inputDisabled} />
+            {form.secure_boot && !form.enable_uefi && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--warning, #e0a341)', marginTop: '0.35rem' }}>
+                Secure Boot needs UEFI firmware — enable it above.
+              </p>
+            )}
+            {system && !system.secure_boot_available && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: '0.35rem' }}>
+                Secure Boot firmware (OVMF secboot) is not installed on this host.
+              </p>
+            )}
+          </div>
           <div>
             <Toggle checked={form.enable_vtpm || false} onChange={v => set('enable_vtpm', v)} label="Enable vTPM 2.0 (required by Windows 11 and other modern OSes)" disabled={inputDisabled} />
             {system && !system.vtpm_available && (

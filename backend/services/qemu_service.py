@@ -17,6 +17,17 @@ KVM_MAJOR, KVM_MINOR = 10, 232
 KVM_GET_API_VERSION = 0xAE00  # _IO(0xAE, 0x00) — returns 12 on every KVM kernel
 QEMU_BINARY = "qemu-system-x86_64"
 OVMF_PATH = "/usr/share/ovmf/OVMF.fd"
+# Secure Boot needs the SMM-enabled OVMF build plus a variable store that
+# carries the Microsoft keys — the plain OVMF.fd has neither, and Windows 11's
+# installer refuses to run without them.
+SECURE_BOOT_CODE_PATH = "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"
+SECURE_BOOT_VARS_PATH = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
+UEFI_VARS_DIR = "/data/uefi"
+
+# Disk formats the UI offers, and the QEMU image driver behind each one: a .vhd
+# file is QEMU's "vpc" driver, everything else shares its name.
+DISK_FORMATS = ("qcow2", "raw", "vhd", "vhdx")
+DISK_DRIVERS = {"qcow2": "qcow2", "raw": "raw", "vhd": "vpc", "vhdx": "vhdx"}
 
 # Memory kept for the API, the web dev server and the OS itself.
 HOST_RESERVE_MB = 2048
@@ -179,6 +190,27 @@ def vtpm_available() -> bool:
     return shutil.which("swtpm") is not None
 
 
+def disk_driver(fmt: Optional[str]) -> str:
+    """QEMU image driver name for a logical disk format (vhd → vpc)."""
+    return DISK_DRIVERS.get((fmt or "qcow2").lower(), "qcow2")
+
+
+def secure_boot_available() -> bool:
+    return os.path.exists(SECURE_BOOT_CODE_PATH) and os.path.exists(SECURE_BOOT_VARS_PATH)
+
+
+def uefi_vars_path(vm_id: str) -> str:
+    return f"{UEFI_VARS_DIR}/{vm_id}_VARS.fd"
+
+
+def ensure_uefi_vars(vm_id: str) -> None:
+    """Give this VM its own Secure Boot variable store (it stores its own keys)."""
+    path = uefi_vars_path(vm_id)
+    if not os.path.exists(path):
+        os.makedirs(UEFI_VARS_DIR, exist_ok=True)
+        shutil.copyfile(SECURE_BOOT_VARS_PATH, path)
+
+
 def capabilities() -> Dict[str, Any]:
     """Everything the UI needs to offer only options this host can honour."""
     accel = accelerator()
@@ -201,7 +233,8 @@ def capabilities() -> Dict[str, Any]:
         "machine_types": ["q35", "pc-i440fx"],
         "disk_buses": ["virtio", "scsi", "sata"],
         "disk_cache_modes": ["writeback", "none", "writethrough", "unsafe", "directsync"],
-        "disk_formats": ["qcow2", "raw"],
+        "disk_formats": list(DISK_FORMATS),
+        "secure_boot_available": secure_boot_available(),
         "network_types": ["nat", "bridged", "host-only", "none"],
         "network_interfaces": ["virtio-net-pci", "e1000", "rtl8139"],
         "display_types": ["vnc", "none"],
@@ -273,10 +306,13 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
 
     # Machine type + accelerator. TCG is the fallback when the host has no KVM,
     # so VMs still boot (slowly) instead of failing outright.
+    use_secure_boot = bool(vm.enable_uefi and vm.secure_boot and secure_boot_available())
+    # Secure Boot runs the firmware in System Management Mode.
+    machine = f"{vm.machine_type},smm=on" if use_secure_boot else vm.machine_type
     if accel == "kvm":
-        args += ["-machine", f"{vm.machine_type},accel=kvm"]
+        args += ["-machine", f"{machine},accel=kvm"]
     else:
-        args += ["-machine", vm.machine_type,
+        args += ["-machine", machine,
                  "-accel", f"tcg,thread=multi,tb-size={tcg_tb_size_mb(vm.cpu_cores)}"]
 
     # CPU model: "host" passes the host CPU through and is KVM-only, so under
@@ -296,7 +332,7 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
     # work on machine types that actually expose those buses, so SCSI and SATA
     # are attached explicitly to a virtio-scsi / AHCI controller.
     if vm.disk_path:
-        drive = (f"file={vm.disk_path},format={vm.disk_format},"
+        drive = (f"file={vm.disk_path},format={disk_driver(vm.disk_format)},"
                  f"cache={vm.disk_cache or 'writeback'}")
         bus = (vm.disk_bus or "virtio").lower()
         if bus == "scsi":
@@ -367,8 +403,16 @@ def build_qemu_args(vm: VMConfig) -> List[str]:
         args += ["-audiodev", "pa,id=audio0"]
         args += ["-device", f"{vm.sound_model},audiodev=audio0"]
 
-    # UEFI
-    if vm.enable_uefi:
+    # UEFI. Secure Boot uses the split SMM-enabled firmware (code pflash is
+    # read-only, the per-VM vars copy holds keys and boot entries); plain UEFI
+    # keeps the single combined firmware image.
+    if use_secure_boot:
+        args += [
+            "-drive", f"if=pflash,format=raw,unit=0,file={SECURE_BOOT_CODE_PATH},readonly=on",
+            "-drive", f"if=pflash,format=raw,unit=1,file={uefi_vars_path(vm.id)}",
+            "-global", "driver=cfi.pflash01,property=secure,value=on",
+        ]
+    elif vm.enable_uefi:
         args += ["-bios", OVMF_PATH]
 
     return args
@@ -531,9 +575,18 @@ async def start_vm(vm: VMConfig) -> None:
     if vm.iso_path and not os.path.exists(vm.iso_path):
         raise RuntimeError(f"ISO image not found: {vm.iso_path}")
 
+    if vm.secure_boot:
+        if not vm.enable_uefi:
+            raise RuntimeError("Secure Boot needs UEFI firmware enabled for this VM")
+        if not secure_boot_available():
+            raise RuntimeError("Secure Boot firmware (OVMF secboot) is not installed in this image")
+
     # Create disk image if it doesn't exist yet
     if vm.disk_path and not os.path.exists(vm.disk_path):
         await create_disk(vm.disk_path, vm.disk_size_gb, vm.disk_format)
+
+    if vm.enable_uefi and vm.secure_boot:
+        ensure_uefi_vars(vm.id)
 
     tpm_process = None
     if vm.enable_vtpm:
@@ -589,8 +642,15 @@ async def force_stop_vm(vm_id: str) -> None:
     """Kill the QEMU process immediately."""
     entry = running_vms.get(vm_id)
     if entry:
-        entry["process"].kill()
-        await entry["process"].wait()
+        process = entry.get("process")
+        if process is not None:
+            process.kill()
+            await process.wait()
+        elif entry.get("pid"):
+            try:
+                os.kill(entry["pid"], signal.SIGKILL)
+            except OSError:
+                pass
     await _stop_vtpm(vm_id)
     running_vms.pop(vm_id, None)
 
@@ -643,17 +703,95 @@ def is_running(vm_id: str) -> bool:
     entry = running_vms.get(vm_id)
     if not entry:
         return False
-    return entry["process"].returncode is None
+    process = entry.get("process")
+    if process is None:
+        # Adopted after a worker reload: only the pid is known.
+        return bool(entry.get("pid")) and os.path.exists(f"/proc/{entry['pid']}")
+    return process.returncode is None
+
+
+def adopt_running(vms: List[VMConfig]) -> int:
+    """Re-register guests left running by a previous API worker.
+
+    `uvicorn --reload` replaces the worker on every backend edit and the
+    registry lives in memory, so a running guest keeps going with nothing
+    tracking it: the UI calls it stopped, its console/stop/monitor actions stop
+    working, and starting it again would open the same disk image twice. Each
+    QEMU process is matched back to its VM through the disk on its command line.
+    """
+    by_disk = {os.path.abspath(v.disk_path): v for v in vms if v.disk_path}
+    adopted = 0
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            with open(f"/proc/{name}/cmdline", "rb") as f:
+                cmdline = f.read().decode(errors="replace")
+        except OSError:
+            continue
+        if QEMU_BINARY not in cmdline:
+            continue
+        disk = ""
+        for part in cmdline.split("\0"):
+            if part.startswith("file="):
+                disk = part.split(",")[0][len("file="):]
+                break
+        vm = by_disk.get(os.path.abspath(disk)) if disk else None
+        if not vm or vm.id in running_vms:
+            continue
+        monitor = f"/tmp/qemu-{vm.id}.sock"
+        if not os.path.exists(monitor):
+            continue
+        running_vms[vm.id] = {
+            "process": None,
+            "pid": pid,
+            "monitor_socket": monitor,
+            "vnc_port": vm.vnc_port or 5900,
+        }
+        adopted += 1
+    return adopted
 
 
 async def create_disk(path: str, size_gb: int, fmt: str) -> None:
     """Create a new QEMU disk image using qemu-img."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    driver = disk_driver(fmt)
+    cmd = ["qemu-img", "create", "-f", driver]
+    if driver == "vpc":
+        # VHD grows with the data written, like qcow2.
+        cmd += ["-o", "subformat=dynamic"]
+    cmd += [path, f"{size_gb}G"]
     process = await asyncio.create_subprocess_exec(
-        "qemu-img", "create", "-f", fmt, path, f"{size_gb}G",
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await process.communicate()
     if process.returncode != 0:
         raise RuntimeError(f"qemu-img create failed: {stderr.decode()}")
+
+
+async def convert_disk(src: str, dst: str, fmt: str, src_fmt: Optional[str] = None) -> None:
+    """Rewrite a disk image into another format (qemu-img convert).
+
+    A half-written target is removed, so a failed conversion never leaves a
+    truncated disk behind that later looks usable.
+    """
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    cmd = ["qemu-img", "convert"]
+    if src_fmt:
+        cmd += ["-f", disk_driver(src_fmt)]
+    cmd += ["-O", disk_driver(fmt), src, dst]
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        raise RuntimeError(stderr.decode().strip() or "qemu-img convert failed")

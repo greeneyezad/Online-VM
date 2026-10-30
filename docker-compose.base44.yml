@@ -1,0 +1,83 @@
+# Base44 sandbox/dev environment for Online VM.
+#
+# Runs the app from the cloned source (live reload), not from the repo's
+# production Dockerfiles/images:
+#   - api : FastAPI backend (uvicorn --reload) + qemu-system-x86 for VM control
+#   - web : Vite dev server on host port 3000, proxying /api and /ws to the api
+#
+# Start: docker compose -f docker-compose.base44.yml up -d --build
+services:
+  api:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        # qemu-system-x86/qemu-utils: VM lifecycle + disk images; ovmf: UEFI boot;
+        # curl: compose healthcheck. Application code is bind-mounted, not baked in.
+        RUN apt-get update && apt-get install -y --no-install-recommends \
+              qemu-system-x86 qemu-utils ovmf curl \
+            && rm -rf /var/lib/apt/lists/*
+        WORKDIR /app
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - vm_data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - WATCHFILES_FORCE_POLLING=true
+    command:
+      - sh
+      - -ec
+      - pip install --no-cache-dir -r requirements.txt && mkdir -p /data/disks /data/isos && exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    restart: on-failure
+    labels:
+      base44.project: Online VM API
+      base44.kind: api
+      base44.docs: /docs
+
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules
+    environment:
+      - BASE44_PREVIEW_MODE
+      - BASE44_SANDBOX_HOST_DOMAIN
+      - BASE44_PUBLIC_HOST_SUFFIX
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      - BACKEND_ORIGIN=http://api:8000
+      - CHOKIDAR_USEPOLLING=true
+    command:
+      - sh
+      - -ec
+      - npm install --no-audit --no-fund && exec npm run dev -- --host 0.0.0.0 --port 3000 --strictPort
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1 (not localhost): Vite binds IPv4 only and Alpine resolves localhost to ::1
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+    restart: on-failure
+    labels:
+      base44.project: Online VM
+      base44.kind: web
+      base44.port: 3000
+
+volumes:
+  vm_data:
+    driver: local
+  web_node_modules:
+    driver: local

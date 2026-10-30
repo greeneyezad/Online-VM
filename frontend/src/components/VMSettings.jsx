@@ -358,7 +358,7 @@ export default function VMSettings() {
         <div>
           <div className="form-group">
             <label className="form-label">Disk Size: {form.disk_size_gb} GB</label>
-            <input type="range" className="form-range" min={5} max={500} step={5}
+            <input type="range" className="form-range" min={5} max={1024} step={1}
               value={form.disk_size_gb || 20} onChange={e => set('disk_size_gb', Number(e.target.value))} disabled={inputDisabled} />
           </div>
           <div className="form-group">

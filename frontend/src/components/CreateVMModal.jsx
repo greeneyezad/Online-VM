@@ -352,7 +352,7 @@ export default function CreateVMModal({ isOpen, onClose, onCreated }) {
                 <label className="form-label">Disk Size: {form.disk_size_gb} GB</label>
                 <input
                   type="range" className="form-range"
-                  min={5} max={500} step={5}
+                  min={5} max={1024} step={1}
                   value={form.disk_size_gb}
                   onChange={e => set('disk_size_gb', Number(e.target.value))}
                 />

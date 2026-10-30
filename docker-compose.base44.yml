@@ -132,8 +132,59 @@ services:
       start_period: 30s
     restart: on-failure
 
+  bigdisk:
+    # A 2 TB virtual hard drive, shared with the sandbox host and with any
+    # container that bind-mounts /srv/bigdisk. The drive is a sparse ext4 image
+    # on the vm_data volume: it reports 2 TB but grows only as data is written,
+    # so real capacity is whatever the sandbox disk has left (see AGENTS.md).
+    # `losetup`/`mount` need CAP_SYS_ADMIN, hence privileged; it serves no port.
+    image: debian:12-slim
+    labels:
+      base44.project: "2 TB virtual drive"
+      base44.kind: "infra"
+    privileged: true
+    working_dir: /data
+    command:
+      - sh
+      - -ec
+      - |
+        if [ ! -f /data/bigdisk.img ]; then
+          truncate -s "$${DRIVE_SIZE:-2T}" /data/bigdisk.img
+        fi
+        if [ "$$(blkid -o value -s TYPE /data/bigdisk.img 2>/dev/null || true)" != "ext4" ]; then
+          mkfs.ext4 -q -F -E lazy_itable_init=1 /data/bigdisk.img
+        fi
+        # The bind target is itself a mount point, so test for the loop
+        # filesystem rather than for "anything mounted here".
+        if findmnt -n -o SOURCE --target /mnt/bigdisk | grep -q '^/dev/loop'; then
+          echo "2 TB drive already mounted"
+        else
+          LOOP=$$(losetup -f --show /data/bigdisk.img)
+          mount -o noatime "$$LOOP" /mnt/bigdisk
+          echo "mounted $$LOOP ($${DRIVE_SIZE:-2T}) at /mnt/bigdisk"
+        fi
+        exec sleep infinity
+    volumes:
+      - vm_data:/data
+      # shared propagation: the filesystem mounted here also appears on the
+      # sandbox host at /srv/bigdisk, and inside any container that binds that
+      # path with the same propagation.
+      - type: bind
+        source: /srv/bigdisk
+        target: /mnt/bigdisk
+        bind:
+          propagation: shared
+    healthcheck:
+      # Healthy only when the mount point really carries the 2 TB filesystem.
+      test: ["CMD-SHELL", "findmnt -n -o SOURCE --target /mnt/bigdisk | grep -q '^/dev/loop' && df -P /mnt/bigdisk | awk 'NR==2 && $$2 > 1000000000 {f=1} END {exit !f}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    restart: on-failure
+
 volumes:
-  # VM definitions (/data/vms.json), disk images, uploaded ISOs and the
-  # /data/swapfile backing guest RAM.
+  # VM definitions (/data/vms.json), disk images, uploaded ISOs, the
+  # /data/swapfile backing guest RAM and the 2 TB /data/bigdisk.img.
   vm_data:
   web_node_modules:

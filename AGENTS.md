@@ -206,6 +206,40 @@ There is no test suite in this repository.
   / `-append` and skips firmware and bootloader. Files live in `/data/kernels`.
   A bad image fails fast with QEMU's own message (e.g. `invalid kernel header`).
 
+## Extra storage: the 2 TB virtual drive
+
+The `bigdisk` compose service provisions a **2 TB virtual hard drive** and makes it
+usable from both the sandbox host and Docker containers.
+
+- Backing store: `/data/bigdisk.img` — a sparse ext4 image on the `vm_data` volume,
+  created with `truncate -s ${DRIVE_SIZE:-2T}` and formatted once with
+  `mkfs.ext4 -E lazy_itable_init=1` (guarded by `blkid`, so restarts never reformat).
+- It is loop-mounted (`losetup` + `mount -o noatime`) inside the privileged `bigdisk`
+  container onto a **shared-propagation** bind of the host directory `/srv/bigdisk`,
+  so the filesystem appears at `/srv/bigdisk` on the sandbox host and inside any
+  container that bind-mounts that path (`-v /srv/bigdisk:/mnt/bigdisk:shared`).
+- **2 TB is virtual, not free space.** The image grows as data is written, but every
+  byte comes out of the sandbox's own disk (~19 GB free with the 12 GB swapfile and
+  the ISOs in place). Writes to the drive fail at that point even though `df` still
+  reports ~2 TB free. Check real headroom with `df -h /data` inside `api`.
+- The mount check is `findmnt --target /mnt/bigdisk` looking for `/dev/loop*`, not
+  `mountpoint`: the bind target is always a mount point, so `mountpoint` reports
+  "already mounted" even when the loop filesystem is absent.
+- The healthcheck fails unless the loop filesystem is mounted *and* its size is
+  above 10^9 1K-blocks, so a plain bind with no drive is never reported healthy.
+- The `api`/`web` containers do **not** mount it. Adding it means recreating `api`,
+  which kills running guests (see "a reloaded worker re-adopts running guests" —
+  only reloads survive). Mount `/srv/bigdisk` in a service when it actually needs
+  the drive, and recreate that service deliberately.
+- Verify:
+
+```bash
+docker compose -f docker-compose.base44.yml ps bigdisk            # healthy
+df -h /srv/bigdisk                                                # /dev/loopN, 2.0T
+docker run --rm -v /srv/bigdisk:/mnt/bigdisk:shared debian:12-slim \
+  sh -c 'echo ok > /mnt/bigdisk/x && cat /mnt/bigdisk/x'          # ok
+```
+
 ## Docker tab
 
 `/docker` (`components/DockerManager.jsx`, `/api/docker/*`) lists the host's
